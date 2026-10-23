@@ -155,6 +155,16 @@ mod tests {
     }
 
     #[test]
+    fn listen_sockets_parses_ipv6_rows() {
+        // /proc/net/tcp6: 32 hex digits of address; [::]:5432 listening, [::1]:443 established
+        let t = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000000000000:1538 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000   999        0 33333 1 0 100 0 0 10 0
+   1: 00000000000000000000000001000000:01BB 00000000000000000000000001000000:D431 01 00000000:00000000 00:00000000 00000000  1000        0 44444 1 0 100 0 0 10 0
+";
+        assert_eq!(listen_sockets(t, false), vec![(5432, 33333)]);
+    }
+
+    #[test]
     fn udp_keeps_only_unconnected_bound_sockets() {
         let t = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
  1: 3500007F:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   991        0 12444 2 0 0

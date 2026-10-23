@@ -276,3 +276,28 @@ fn hostile_argv_is_shown_escaped_not_hidden() {
         "raw escape reached the terminal: {out}"
     );
 }
+
+#[test]
+fn process_on_two_requested_ports_is_killed_once() {
+    let script = "import socket,time\nss=[socket.socket() for _ in range(2)]\n\
+                  [s.bind(('127.0.0.1',0)) or s.listen() for s in ss]\n\
+                  print(*[s.getsockname()[1] for s in ss],flush=True);time.sleep(60)";
+    let mut cmd = Command::new(if cfg!(windows) { "python" } else { "python3" });
+    cmd.args(["-c", script])
+        .stdout(std::process::Stdio::piped());
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x10); // own console
+    let mut child = cmd.spawn().unwrap();
+    let mut line = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(child.stdout.take().unwrap()),
+        &mut line,
+    )
+    .unwrap();
+    let ports: Vec<&str> = line.split_whitespace().collect();
+    let (out, code) = run(&[ports[0], ports[1], "--kill"]);
+    child.wait().unwrap();
+    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(out.matches("exited after").count(), 1, "{out}");
+    assert!(!out.contains("failed"), "{out}");
+}
