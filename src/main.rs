@@ -25,6 +25,14 @@ pub struct Info {
     pub cmd: String,
     pub cwd: String,
     pub uptime_secs: u64,
+    /// Process start time (platform units). With the pid it identifies one process,
+    /// so a pid that is reused after the target exits is never mistaken for it.
+    pub started: u64,
+}
+
+/// Is `pid` still the process that started at `started`?
+fn same_process(pid: u32, started: u64) -> bool {
+    proc::alive(pid) && proc::info(pid).is_some_and(|i| i.started == started)
 }
 
 #[derive(Parser)]
@@ -67,30 +75,35 @@ fn truncate(s: &str, max: usize) -> String {
     s.chars().take(max - 1).chain(['…']).collect()
 }
 
-fn wait_exit(pid: u32) -> bool {
+fn wait_exit(pid: u32, started: u64) -> bool {
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
-        if !proc::alive(pid) {
+        if !same_process(pid, started) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    !proc::alive(pid)
+    !same_process(pid, started)
 }
 
 type KillStep = fn(u32) -> std::io::Result<()>;
 
-fn kill(pid: u32, force: bool) -> bool {
+fn kill(pid: u32, started: u64, force: bool) -> bool {
     let steps: [(KillStep, &str); 2] = [
         (proc::ask_exit, proc::GRACEFUL),
         (proc::terminate, proc::FORCEFUL),
     ];
     for (step, name) in steps.into_iter().take(if force { 2 } else { 1 }) {
+        // Re-check right before each signal: the pid may have been reused meanwhile.
+        if !same_process(pid, started) {
+            println!("pid {pid}: already exited");
+            return true;
+        }
         if let Err(e) = step(pid) {
             eprintln!("pid {pid}: {name} failed: {e}");
             return false;
         }
-        if wait_exit(pid) {
+        if wait_exit(pid, started) {
             println!("pid {pid}: exited after {name}");
             return true;
         }
@@ -296,7 +309,7 @@ fn main() -> ExitCode {
             signalled_any = true;
             if !killed.contains(&i.pid) {
                 killed.push(i.pid); // one process can hold several requested ports
-                if !kill(i.pid, args.force) {
+                if !kill(i.pid, i.started, args.force) {
                     code = 3;
                 }
             }
