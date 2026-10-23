@@ -42,7 +42,10 @@ fn kill(pid: u32, force: bool) -> bool {
             break;
         }
         if unsafe { libc::kill(pid as i32, sig) } != 0 {
-            eprintln!("pid {pid}: {name} failed: {}", std::io::Error::last_os_error());
+            eprintln!(
+                "pid {pid}: {name} failed: {}",
+                std::io::Error::last_os_error()
+            );
             return false;
         }
         if wait_exit(pid) {
@@ -67,11 +70,22 @@ fn main() -> ExitCode {
     let mut ok = true;
     for pid in pids {
         let Some(i) = proc::info(pid) else { continue };
-        println!("pid     {}\nparent  {}\nuser    {}\ncmd     {}\ncwd     {}\nuptime  {}\n",
-            i.pid, i.ppid, i.user, i.cmd, i.cwd, fmt_duration(i.uptime_secs));
+        println!(
+            "pid     {}\nparent  {}\nuser    {}\ncmd     {}\ncwd     {}\nuptime  {}\n",
+            i.pid,
+            i.ppid,
+            i.user,
+            i.cmd,
+            i.cwd,
+            fmt_duration(i.uptime_secs)
+        );
         if args.kill {
             ok &= kill(pid, args.force);
         }
     }
-    if ok { ExitCode::SUCCESS } else { ExitCode::from(2) }
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(2)
+    }
 }

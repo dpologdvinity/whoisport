@@ -29,13 +29,22 @@ pub fn pids_for_inodes(inodes: &[u64]) -> (Vec<u32>, bool) {
     let targets: Vec<String> = inodes.iter().map(|i| format!("socket:[{i}]")).collect();
     let mut pids = Vec::new();
     let mut hidden = false;
-    let Ok(dir) = fs::read_dir("/proc") else { return (pids, hidden) };
+    let Ok(dir) = fs::read_dir("/proc") else {
+        return (pids, hidden);
+    };
     for entry in dir.flatten() {
-        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
         match fs::read_dir(entry.path().join("fd")) {
             Ok(fds) => {
                 let owns = fds.flatten().any(|fd| {
-                    fs::read_link(fd.path()).is_ok_and(|l| targets.iter().any(|t| l.to_str() == Some(t)))
+                    fs::read_link(fd.path())
+                        .is_ok_and(|l| targets.iter().any(|t| l.to_str() == Some(t)))
                 });
                 if owns {
                     pids.push(pid);
@@ -82,12 +91,22 @@ fn user_name(uid: u32) -> String {
 pub fn info(pid: u32) -> Option<Info> {
     let base = format!("/proc/{pid}");
     let (ppid, start_ticks) = parse_stat(&fs::read_to_string(format!("{base}/stat")).ok()?)?;
-    let cmd = fs::read_to_string(format!("{base}/cmdline")).ok()?.replace('\0', " ");
+    let cmd = fs::read_to_string(format!("{base}/cmdline"))
+        .ok()?
+        .replace('\0', " ");
     let cmd = match cmd.trim() {
-        "" => fs::read_to_string(format!("{base}/comm")).ok()?.trim().to_string(),
+        "" => fs::read_to_string(format!("{base}/comm"))
+            .ok()?
+            .trim()
+            .to_string(),
         c => c.to_string(),
     };
-    let boot_secs: f64 = fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+    let boot_secs: f64 = fs::read_to_string("/proc/uptime")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
     Some(Info {
         pid,
@@ -99,8 +118,12 @@ pub fn info(pid: u32) -> Option<Info> {
     })
 }
 
+/// A zombie (state Z) has already exited; it only lingers until its parent reaps it.
 pub fn alive(pid: u32) -> bool {
-    fs::metadata(format!("/proc/{pid}")).is_ok()
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|s| Some(s[s.rfind(')')? + 1..].split_whitespace().next()? != "Z"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
