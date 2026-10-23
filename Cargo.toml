@@ -1,6 +1,6 @@
 [package]
 name = "whoisport"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Show what is listening on a TCP port, and optionally kill it"
 license = "MIT"
@@ -9,10 +9,17 @@ repository = "https://github.com/dpologdvinity/whoisport"
 authors = ["Kaitlyn Bassford"]
 keywords = ["port", "process", "cli", "lsof", "devtools"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = ["demo.gif", "demo.tape", ".github"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 libc = "0.2.191"
+
+# Lets `cargo binstall whoisport` fetch the prebuilt release binaries.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
 
 [profile.release]
 lto = true
