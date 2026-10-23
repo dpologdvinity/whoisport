@@ -3,6 +3,13 @@ mod proc;
 #[cfg(windows)]
 #[path = "proc_windows.rs"]
 mod proc;
+#[cfg(target_os = "macos")]
+#[path = "proc_macos.rs"]
+mod proc;
+#[cfg(any(windows, target_os = "macos"))]
+mod sysinfo_info;
+#[cfg(unix)]
+mod unix_kill;
 
 mod docker;
 
