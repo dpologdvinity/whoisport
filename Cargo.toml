@@ -10,7 +10,7 @@ repository = "https://github.com/dpologdvinity/whoisport"
 authors = ["Kaitlyn Bassford"]
 keywords = ["port", "process", "cli", "lsof", "devtools"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["demo.gif", "demo.tape", ".github", "bucket"]
+exclude = ["demo.gif", "demo.tape", ".github", "bucket", "pyproject.toml"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }

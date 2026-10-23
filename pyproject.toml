@@ -1,0 +1,31 @@
+# Builds wheels that contain the whoisport binary, so `pipx install whoisport`
+# and `uvx whoisport` work without a Rust toolchain. Version comes from Cargo.toml.
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "whoisport"
+dynamic = ["version"]
+description = "Show what is listening on a TCP or UDP port, and optionally kill it"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [{ name = "Kaitlyn Bassford" }]
+keywords = ["port", "process", "cli", "lsof", "devtools"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Rust",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/dpologdvinity/whoisport"
+Issues = "https://github.com/dpologdvinity/whoisport/issues"
+
+[tool.maturin]
+bindings = "bin"
