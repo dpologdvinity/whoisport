@@ -1,14 +1,25 @@
+use crate::Info;
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::os::unix::fs::MetadataExt;
 
-pub struct Info {
-    pub pid: u32,
-    pub ppid: u32,
-    pub user: String,
-    pub cmd: String,
-    pub cwd: String,
-    pub uptime_secs: u64,
+pub const GRACEFUL: &str = "SIGTERM";
+pub const FORCEFUL: &str = "SIGKILL";
+
+fn signal(pid: u32, sig: libc::c_int) -> io::Result<()> {
+    match unsafe { libc::kill(pid as i32, sig) } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+pub fn ask_exit(pid: u32) -> io::Result<()> {
+    signal(pid, libc::SIGTERM)
+}
+
+pub fn terminate(pid: u32) -> io::Result<()> {
+    signal(pid, libc::SIGKILL)
 }
 
 /// (port, socket inode) of TCP sockets in LISTEN state, from a /proc/net/tcp{,6} dump.

@@ -40,10 +40,12 @@ cargo binstall whoisport   # prebuilt binary, no compiling
 cargo install whoisport    # build from source
 ```
 
-Or download a static binary (x86_64 or aarch64) from the
-[Releases page](https://github.com/dpologdvinity/whoisport/releases).
+Or download a binary from the
+[Releases page](https://github.com/dpologdvinity/whoisport/releases): static Linux
+builds for x86_64 and aarch64, and a Windows x86_64 `.exe`.
 
-Linux only for now. It reads `/proc` directly and has no runtime dependencies.
+Works on **Linux** (reads `/proc` directly, no runtime dependencies) and
+**Windows 10/11**.
 
 ## Usage
 
@@ -51,24 +53,37 @@ Linux only for now. It reads `/proc` directly and has no runtime dependencies.
 whoisport                          # list every listening port
 whoisport <PORT>...                # details for one or more ports
 whoisport <PORT>... --kill [--force]
+whoisport [<PORT>...] --json       # machine-readable output
 ```
 
-| Flag      | Effect                                                          |
-|-----------|-----------------------------------------------------------------|
-| `--kill`  | Send SIGTERM and wait up to 3 seconds for the process to exit.  |
-| `--force` | With `--kill`: escalate to SIGKILL if SIGTERM did not work.     |
+| Flag      | Effect                                                              |
+|-----------|---------------------------------------------------------------------|
+| `--kill`  | Ask the process to exit and wait up to 3 seconds.                   |
+| `--force` | With `--kill`: forcibly terminate it if asking did not work.        |
+| `--json`  | Print a JSON array with `port`, `pid`, `ppid`, `user`, `cmd`, `cwd`, `uptime_secs`. |
 
 `--kill` always needs explicit ports; it never kills everything.
 
-Exit codes: `0` success, `1` a requested port had nothing listening (or nothing
-is listening at all), `2` a kill failed or the arguments were invalid.
+How `--kill` asks, per platform:
 
-Checks IPv4 and IPv6 TCP sockets in the LISTEN state. Processes owned by other
-users can't be inspected without `sudo`; they show up as `?`.
+| Platform | `--kill`                                                        | `--force`          |
+|----------|-----------------------------------------------------------------|--------------------|
+| Linux    | `SIGTERM`                                                       | `SIGKILL`          |
+| Windows  | Ctrl+C in the process's console, and `WM_CLOSE` to its windows  | `TerminateProcess` |
+
+On Windows the Ctrl+C reaches every program in that console, exactly as if you
+pressed Ctrl+C in that terminal window.
+
+Exit codes: `0` success, `1` a requested port had nothing listening (or nothing
+is listening at all), `2` invalid arguments, `3` a kill failed.
+
+Checks IPv4 and IPv6 TCP sockets in the LISTEN state. On Linux, processes owned
+by other users can't be inspected without `sudo`; they show up as `?`. On
+Windows, details of system services need an elevated terminal.
 
 ## Not yet supported
 
-UDP, macOS, Windows, Docker port-mapping awareness, JSON output.
+UDP, macOS, Docker port-mapping awareness.
 
 ## License
 

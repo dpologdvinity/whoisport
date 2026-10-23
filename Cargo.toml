@@ -13,7 +13,7 @@ exclude = ["demo.gif", "demo.tape", ".github"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
-libc = "0.2.191"
+serde_json = "1.0.154"
 
 # Lets `cargo binstall whoisport` fetch the prebuilt release binaries.
 [package.metadata.binstall]
@@ -21,8 +21,19 @@ pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ targe
 bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"
+
+[target."cfg(windows)".dependencies]
+sysinfo = { version = "0.39.6", default-features = false, features = ["system", "user"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Threading", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }

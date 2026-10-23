@@ -68,21 +68,33 @@ fn kill_requires_a_port() {
     assert_eq!(code, Some(2)); // clap usage error; must never mean "kill everything"
 }
 
-/// Spawn a python listener (optionally ignoring SIGTERM); returns the child and its port.
-fn spawn_listener(ignore_term: bool) -> (std::process::Child, String) {
-    let ign = if ignore_term {
-        "import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+#[cfg(windows)]
+const ASK: &str = "Ctrl+C/close";
+#[cfg(windows)]
+const FORCE: &str = "TerminateProcess";
+#[cfg(not(windows))]
+const ASK: &str = "SIGTERM";
+#[cfg(not(windows))]
+const FORCE: &str = "SIGKILL";
+
+/// Spawn a python listener (optionally ignoring polite exit requests); returns it and its port.
+fn spawn_listener(stubborn: bool) -> (std::process::Child, String) {
+    let ign = if stubborn {
+        "import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.signal(signal.SIGINT,signal.SIG_IGN);"
     } else {
         ""
     };
     let script = format!(
         "{ign}import socket,time;s=socket.socket();s.bind(('127.0.0.1',0));s.listen();print(s.getsockname()[1],flush=True);time.sleep(60)"
     );
-    let mut child = Command::new("python3")
-        .args(["-c", &script])
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut cmd = Command::new(if cfg!(windows) { "python" } else { "python3" });
+    cmd.args(["-c", &script])
+        .stdout(std::process::Stdio::piped());
+    // On Windows the Ctrl+C goes to the target's whole console; give it its own so the
+    // test runner (and cargo) never receive it.
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x10); // CREATE_NEW_CONSOLE
+    let mut child = cmd.spawn().unwrap();
     let mut line = String::new();
     std::io::BufRead::read_line(
         &mut std::io::BufReader::new(child.stdout.take().unwrap()),
@@ -94,20 +106,50 @@ fn spawn_listener(ignore_term: bool) -> (std::process::Child, String) {
 
 #[test]
 fn kill_terminates_listener() {
-    // The child stays a zombie until wait(), so this also covers zombie-as-exited.
+    // On Linux the child stays a zombie until wait(), so this also covers zombie-as-exited.
     let (mut child, port) = spawn_listener(false);
     let (stdout, code) = run(&[&port, "--kill"]);
     let status = child.wait().unwrap();
     assert_eq!(code, Some(0), "{stdout}");
-    assert!(stdout.contains("exited after SIGTERM"), "{stdout}");
+    assert!(stdout.contains(&format!("exited after {ASK}")), "{stdout}");
     assert!(!status.success());
 }
 
 #[test]
-fn force_escalates_when_sigterm_ignored() {
+fn force_escalates_when_polite_request_ignored() {
     let (mut child, port) = spawn_listener(true);
     let (stdout, code) = run(&[&port, "--kill", "--force"]);
     child.wait().unwrap();
     assert_eq!(code, Some(0), "{stdout}");
-    assert!(stdout.contains("exited after SIGKILL"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("exited after {FORCE}")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn failed_kill_exits_three() {
+    let (mut child, port) = spawn_listener(true);
+    let (stdout, code) = run(&[&port, "--kill"]);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(code, Some(3), "{stdout}");
+    assert!(stdout.contains("still running"), "{stdout}");
+}
+
+#[test]
+fn json_output_lists_listener() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let (stdout, code) = run(&[&port.to_string(), "--json"]);
+    assert_eq!(code, Some(0));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v[0]["port"], port);
+    assert_eq!(v[0]["pid"], std::process::id());
+}
+
+#[test]
+fn json_conflicts_with_kill() {
+    let (_, code) = run(&["1", "--json", "--kill"]);
+    assert_eq!(code, Some(2));
 }

@@ -24,3 +24,16 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           files: whoisport-*.tar.gz
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --target x86_64-pc-windows-msvc
+      - env:
+          TAG: ${{ github.ref_name }}
+        shell: pwsh
+        run: Compress-Archive -Path target/x86_64-pc-windows-msvc/release/whoisport.exe -DestinationPath "whoisport-$env:TAG-x86_64-pc-windows-msvc.zip"
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: whoisport-*.zip
