@@ -1,6 +1,6 @@
 [package]
 name = "whoisport"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.95" # sysinfo (Windows, macOS) needs 1.95
 description = "Show what is listening on a TCP or UDP port, and optionally kill it"
