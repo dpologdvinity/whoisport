@@ -153,3 +153,18 @@ fn json_conflicts_with_kill() {
     let (_, code) = run(&["1", "--json", "--kill"]);
     assert_eq!(code, Some(2));
 }
+
+#[test]
+fn udp_flag_finds_bound_socket() {
+    let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = s.local_addr().unwrap().port().to_string();
+    let (stdout, code) = run(&[&port, "--udp"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(stdout.contains(&format!("port    {port}/udp")), "{stdout}");
+    assert!(
+        stdout.contains(&format!("pid     {}", std::process::id())),
+        "{stdout}"
+    );
+    // ...and it is not a TCP listener
+    assert_eq!(run(&[&port]).1, Some(1));
+}

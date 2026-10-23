@@ -7,8 +7,9 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_INSUFFICIENT_BUFFER, HWND, LPARAM, NO_ERROR, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, MIB_TCP6TABLE_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
-    TCP_TABLE_OWNER_PID_LISTENER,
+    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6TABLE_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
+    MIB_UDP6TABLE_OWNER_PID, MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
+    UDP_TABLE_OWNER_PID,
 };
 use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows_sys::Win32::System::Console::{
@@ -28,20 +29,19 @@ pub const FORCEFUL: &str = "TerminateProcess";
 const HELPER_ARG: &str = "__whoisport_ctrl_c";
 const DETACHED_PROCESS: u32 = 0x0000_0008;
 
-/// Raw GetExtendedTcpTable output for one address family, in a u32 buffer for alignment.
-fn tcp_table(family: u16) -> Vec<u32> {
+/// Raw GetExtended{Tcp,Udp}Table output for one address family, in a u32 buffer for alignment.
+fn socket_table(family: u16, udp: bool) -> Vec<u32> {
     let mut size = 0u32;
     let mut buf: Vec<u32> = Vec::new();
     loop {
+        let (ptr, af) = (buf.as_mut_ptr().cast(), family as u32);
         let r = unsafe {
-            GetExtendedTcpTable(
-                buf.as_mut_ptr().cast(),
-                &mut size,
-                0,
-                family as u32,
-                TCP_TABLE_OWNER_PID_LISTENER,
-                0,
-            )
+            match udp {
+                false => {
+                    GetExtendedTcpTable(ptr, &mut size, 0, af, TCP_TABLE_OWNER_PID_LISTENER, 0)
+                }
+                true => GetExtendedUdpTable(ptr, &mut size, 0, af, UDP_TABLE_OWNER_PID, 0),
+            }
         };
         match r {
             NO_ERROR => return buf,
@@ -51,31 +51,39 @@ fn tcp_table(family: u16) -> Vec<u32> {
     }
 }
 
-/// Every TCP listener as (port, pid), sorted. Windows reports the owner of every socket.
-pub fn listeners() -> Vec<(u16, Option<u32>)> {
-    let mut out = Vec::new();
-    // Ports are in network byte order in the low 16 bits of a u32.
-    let port = |p: u32| u16::from_be(p as u16);
-    let v4 = tcp_table(AF_INET);
-    if !v4.is_empty() {
-        let t = v4.as_ptr() as *const MIB_TCPTABLE_OWNER_PID;
-        let rows =
-            unsafe { std::slice::from_raw_parts((*t).table.as_ptr(), (*t).dwNumEntries as usize) };
-        out.extend(
+/// (port, pid) rows of a table buffer whose layout is `$table` (dwNumEntries + rows).
+macro_rules! rows {
+    ($buf:expr, $table:ty) => {{
+        let buf = $buf;
+        if buf.is_empty() {
+            Vec::new()
+        } else {
+            let t = buf.as_ptr() as *const $table;
+            let rows = unsafe {
+                std::slice::from_raw_parts((*t).table.as_ptr(), (*t).dwNumEntries as usize)
+            };
+            // Ports are in network byte order in the low 16 bits of a u32.
             rows.iter()
-                .map(|r| (port(r.dwLocalPort), Some(r.dwOwningPid))),
-        );
+                .map(|r| (u16::from_be(r.dwLocalPort as u16), Some(r.dwOwningPid)))
+                .collect::<Vec<_>>()
+        }
+    }};
+}
+
+/// Every listener as (port, pid), sorted. Windows reports the owner of every socket.
+/// UDP has no listen state, so every bound UDP socket counts.
+pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
+    let mut out = match udp {
+        false => [
+            rows!(socket_table(AF_INET, false), MIB_TCPTABLE_OWNER_PID),
+            rows!(socket_table(AF_INET6, false), MIB_TCP6TABLE_OWNER_PID),
+        ],
+        true => [
+            rows!(socket_table(AF_INET, true), MIB_UDPTABLE_OWNER_PID),
+            rows!(socket_table(AF_INET6, true), MIB_UDP6TABLE_OWNER_PID),
+        ],
     }
-    let v6 = tcp_table(AF_INET6);
-    if !v6.is_empty() {
-        let t = v6.as_ptr() as *const MIB_TCP6TABLE_OWNER_PID;
-        let rows =
-            unsafe { std::slice::from_raw_parts((*t).table.as_ptr(), (*t).dwNumEntries as usize) };
-        out.extend(
-            rows.iter()
-                .map(|r| (port(r.dwLocalPort), Some(r.dwOwningPid))),
-        );
-    }
+    .concat();
     out.sort();
     out.dedup(); // the same process often listens on both IPv4 and IPv6
     out

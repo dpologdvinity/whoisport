@@ -22,15 +22,20 @@ pub fn terminate(pid: u32) -> io::Result<()> {
     signal(pid, libc::SIGKILL)
 }
 
-/// (port, socket inode) of TCP sockets in LISTEN state, from a /proc/net/tcp{,6} dump.
-pub fn listen_sockets(table: &str) -> Vec<(u16, u64)> {
+/// (port, socket inode) of listening sockets in a /proc/net/{tcp,udp}{,6} dump.
+/// TCP: LISTEN state. UDP has no listen state: bound (07) with no remote peer.
+pub fn listen_sockets(table: &str, udp: bool) -> Vec<(u16, u64)> {
     table
         .lines()
         .skip(1)
         .filter_map(|line| {
             let f: Vec<&str> = line.split_whitespace().collect();
             let port = u16::from_str_radix(f.get(1)?.rsplit(':').next()?, 16).ok()?;
-            (f.get(3)? == &"0A").then(|| Some((port, f.get(9)?.parse().ok()?)))?
+            let listening = match udp {
+                false => f.get(3)? == &"0A",
+                true => f.get(3)? == &"07" && f.get(2)?.ends_with(":0000"),
+            };
+            listening.then(|| Some((port, f.get(9)?.parse().ok()?)))?
         })
         .collect()
 }
@@ -67,12 +72,13 @@ fn socket_owners() -> HashMap<u64, Vec<u32>> {
     owners
 }
 
-/// Every TCP listener as (port, pid), sorted; pid is None when the owner is unreadable.
-pub fn listeners() -> Vec<(u16, Option<u32>)> {
-    let sockets: Vec<(u16, u64)> = ["/proc/net/tcp", "/proc/net/tcp6"]
+/// Every listener as (port, pid), sorted; pid is None when the owner is unreadable.
+pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
+    let proto = if udp { "udp" } else { "tcp" };
+    let sockets: Vec<(u16, u64)> = ["", "6"]
         .iter()
-        .filter_map(|p| fs::read_to_string(p).ok())
-        .flat_map(|t| listen_sockets(&t))
+        .filter_map(|v| fs::read_to_string(format!("/proc/net/{proto}{v}")).ok())
+        .flat_map(|t| listen_sockets(&t, udp))
         .collect();
     let owners = socket_owners();
     let mut out: Vec<(u16, Option<u32>)> = sockets
@@ -158,7 +164,20 @@ mod tests {
     #[test]
     fn listen_sockets_keeps_only_listen_state() {
         // 0x0BB8 = 3000, 0x1F90 = 8080; the ESTABLISHED row (inode 67890) is skipped
-        assert_eq!(listen_sockets(TABLE), vec![(3000, 12345), (8080, 11111)]);
+        assert_eq!(
+            listen_sockets(TABLE, false),
+            vec![(3000, 12345), (8080, 11111)]
+        );
+    }
+
+    #[test]
+    fn udp_keeps_only_unconnected_bound_sockets() {
+        let t = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+ 1: 3500007F:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   991        0 12444 2 0 0
+ 2: 0100007F:D431 0100007F:0035 01 00000000:00000000 00:00000000 00000000  1000        0 22222 2 0 0
+";
+        // port 53 server kept; connected client socket (state 01, remote :0035) dropped
+        assert_eq!(listen_sockets(t, true), vec![(53, 12444)]);
     }
 
     #[test]
@@ -171,7 +190,7 @@ mod tests {
     fn finds_own_listener() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
-        assert!(listeners().contains(&(port, Some(std::process::id()))));
+        assert!(listeners(false).contains(&(port, Some(std::process::id()))));
         assert_eq!(info(std::process::id()).unwrap().pid, std::process::id());
     }
 }

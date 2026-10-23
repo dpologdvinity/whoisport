@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/whoisport.svg)](https://crates.io/crates/whoisport)
 [![CI](https://github.com/dpologdvinity/whoisport/actions/workflows/ci.yml/badge.svg)](https://github.com/dpologdvinity/whoisport/actions/workflows/ci.yml)
 
-Find out what is listening on a TCP port, and optionally kill it.
+Find out what is listening on a TCP or UDP port, and optionally kill it.
 
 ![whoisport demo](demo.gif)
 
@@ -40,6 +40,13 @@ cargo binstall whoisport   # prebuilt binary, no compiling
 cargo install whoisport    # build from source
 ```
 
+Windows, with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add whoisport https://github.com/dpologdvinity/whoisport
+scoop install whoisport
+```
+
 Or download a binary from the
 [Releases page](https://github.com/dpologdvinity/whoisport/releases): static Linux
 builds for x86_64 and aarch64, and a Windows x86_64 `.exe`.
@@ -54,13 +61,19 @@ whoisport                          # list every listening port
 whoisport <PORT>...                # details for one or more ports
 whoisport <PORT>... --kill [--force]
 whoisport [<PORT>...] --json       # machine-readable output
+whoisport [<PORT>...] --udp        # UDP instead of TCP
 ```
 
 | Flag      | Effect                                                              |
 |-----------|---------------------------------------------------------------------|
 | `--kill`  | Ask the process to exit and wait up to 3 seconds.                   |
 | `--force` | With `--kill`: forcibly terminate it if asking did not work.        |
-| `--json`  | Print a JSON array with `port`, `pid`, `ppid`, `user`, `cmd`, `cwd`, `uptime_secs`. |
+| `--json`  | Print a JSON array with `port`, `proto`, `pid`, `ppid`, `user`, `cmd`, `cwd`, `uptime_secs`, `container`, `image`. |
+| `--udp`   | Look at UDP sockets instead of TCP. UDP has no listening state, so any bound socket without a remote peer counts. |
+
+Docker: when a port is published by a container, whoisport shows the container
+name and image (`docker  web (nginx:alpine)`), even when the `docker-proxy`
+process itself is owned by root. It asks `docker ps` only in that case.
 
 `--kill` always needs explicit ports; it never kills everything.
 
@@ -83,7 +96,7 @@ Windows, details of system services need an elevated terminal.
 
 ## Not yet supported
 
-UDP, macOS, Docker port-mapping awareness.
+macOS.
 
 ## License
 

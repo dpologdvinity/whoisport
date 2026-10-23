@@ -4,6 +4,8 @@ mod proc;
 #[path = "proc_windows.rs"]
 mod proc;
 
+mod docker;
+
 use clap::Parser;
 use serde_json::json;
 use std::process::ExitCode;
@@ -19,7 +21,7 @@ pub struct Info {
 }
 
 #[derive(Parser)]
-#[command(version, about = "Show what is listening on a TCP port")]
+#[command(version, about = "Show what is listening on a TCP or UDP port")]
 struct Args {
     /// Port(s) to inspect; omit to list every listening port
     ports: Vec<u16>,
@@ -32,7 +34,13 @@ struct Args {
     /// Print results as a JSON array
     #[arg(long, conflicts_with = "kill")]
     json: bool,
+    /// Look at UDP instead of TCP (any bound socket with no remote peer counts)
+    #[arg(long)]
+    udp: bool,
 }
+
+/// (container name, image) of the container publishing a host port.
+type Container = (String, String);
 
 const HIDDEN: &str = "owned by another user; run with sudo to see it";
 
@@ -91,15 +99,24 @@ fn kill(pid: u32, force: bool) -> bool {
     false
 }
 
-fn to_json(port: u16, pid: Option<u32>, info: &Option<Info>) -> serde_json::Value {
+fn to_json(
+    port: u16,
+    proto: &str,
+    pid: Option<u32>,
+    info: &Option<Info>,
+    c: Option<&Container>,
+) -> serde_json::Value {
+    let (container, image) = c.map_or((None, None), |(n, i)| (Some(n), Some(i)));
     match info {
         Some(i) => json!({
-            "port": port, "pid": i.pid, "ppid": i.ppid, "user": i.user,
+            "port": port, "proto": proto, "pid": i.pid, "ppid": i.ppid, "user": i.user,
             "cmd": i.cmd, "cwd": i.cwd, "uptime_secs": i.uptime_secs,
+            "container": container, "image": image,
         }),
         None => json!({
-            "port": port, "pid": pid, "ppid": null, "user": null,
+            "port": port, "proto": proto, "pid": pid, "ppid": null, "user": null,
             "cmd": null, "cwd": null, "uptime_secs": null,
+            "container": container, "image": image,
         }),
     }
 }
@@ -109,7 +126,12 @@ fn main() -> ExitCode {
     proc::run_helper_if_requested();
 
     let args = Args::parse();
-    let all = proc::listeners();
+    let proto = if args.udp { "udp" } else { "tcp" };
+    let label = |port: u16| match args.udp {
+        true => format!("{port}/udp"),
+        false => port.to_string(),
+    };
+    let all = proc::listeners(args.udp);
     let rows: Vec<(u16, Option<u32>, Option<Info>)> = all
         .into_iter()
         .filter(|(port, _)| args.ports.is_empty() || args.ports.contains(port))
@@ -121,6 +143,21 @@ fn main() -> ExitCode {
         .copied()
         .filter(|p| !rows.iter().any(|r| r.0 == *p))
         .collect();
+    // Docker's port forwarder usually runs as root, so a hidden owner may be docker too.
+    // Only ask docker when some listener could be its forwarder.
+    let maybe_docker =
+        |info: &Option<Info>| info.as_ref().is_none_or(|i| docker::is_docker(&i.cmd));
+    let published = match rows.iter().any(|r| maybe_docker(&r.2)) {
+        true => docker::published(args.udp),
+        false => Vec::new(),
+    };
+    let container = |port: u16, info: &Option<Info>| -> Option<Container> {
+        if !maybe_docker(info) {
+            return None;
+        }
+        let (_, name, image) = published.iter().find(|(p, _, _)| *p == port)?;
+        Some((name.clone(), image.clone()))
+    };
     let mut code = if rows.is_empty() || !missing.is_empty() {
         1
     } else {
@@ -130,7 +167,7 @@ fn main() -> ExitCode {
     if args.json {
         let out: Vec<_> = rows
             .iter()
-            .map(|(port, pid, i)| to_json(*port, *pid, i))
+            .map(|(port, pid, i)| to_json(*port, proto, *pid, i, container(*port, i).as_ref()))
             .collect();
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
         return ExitCode::from(code);
@@ -141,16 +178,29 @@ fn main() -> ExitCode {
             println!("nothing listening");
             return ExitCode::from(1);
         }
-        println!("{:<6} {:<8} {:<10} CMD", "PORT", "PID", "USER");
+        let w = if args.udp { 10 } else { 6 };
+        println!("{:<w$} {:<8} {:<10} CMD", "PORT", "PID", "USER");
         for (port, _, info) in &rows {
+            let port_label = label(*port);
             match info {
-                Some(i) => println!(
-                    "{port:<6} {:<8} {:<10} {}",
-                    i.pid,
-                    truncate(&i.user, 10),
-                    truncate(&i.cmd, 80)
-                ),
-                None => println!("{port:<6} {:<8} {:<10} ?", "?", "?"),
+                Some(i) => {
+                    let cmd = match container(*port, info) {
+                        Some((name, image)) => format!("docker: {name} ({image})"),
+                        None => i.cmd.clone(),
+                    };
+                    println!(
+                        "{port_label:<w$} {:<8} {:<10} {}",
+                        i.pid,
+                        truncate(&i.user, 10),
+                        truncate(&cmd, 80)
+                    )
+                }
+                None => {
+                    let cmd = container(*port, info).map_or("?".into(), |(name, image)| {
+                        format!("docker: {name} ({image})")
+                    });
+                    println!("{port_label:<w$} {:<8} {:<10} {cmd}", "?", "?")
+                }
             }
         }
         if rows.iter().any(|r| r.2.is_none()) {
@@ -162,18 +212,26 @@ fn main() -> ExitCode {
     let mut killed = Vec::new();
     for port in &args.ports {
         if missing.contains(port) {
-            println!("nothing listening on :{port}\n");
+            println!("nothing listening on :{}\n", label(*port));
         }
         for (_, _, info) in rows.iter().filter(|r| r.0 == *port) {
             let Some(i) = info else {
-                println!("port    {port}\npid     ? ({HIDDEN})\n");
+                let docker_line = container(*port, info)
+                    .map_or(String::new(), |(n, img)| format!("docker  {n} ({img})\n"));
+                println!(
+                    "port    {}\npid     ? ({HIDDEN})\n{docker_line}",
+                    label(*port)
+                );
                 if args.kill {
                     code = 3;
                 }
                 continue;
             };
+            let docker_line = container(*port, info)
+                .map_or(String::new(), |(n, img)| format!("docker  {n} ({img})\n"));
             println!(
-                "port    {port}\npid     {}\nparent  {}\nuser    {}\ncmd     {}\ncwd     {}\nuptime  {}\n",
+                "port    {}\npid     {}\nparent  {}\nuser    {}\ncmd     {}\n{docker_line}cwd     {}\nuptime  {}\n",
+                label(*port),
                 i.pid,
                 i.ppid,
                 i.user,

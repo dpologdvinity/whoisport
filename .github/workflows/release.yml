@@ -37,3 +37,22 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           files: whoisport-*.zip
+      # Point the Scoop bucket (bucket/whoisport.json on master) at the new zip.
+      - env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        shell: pwsh
+        run: |
+          $zip = "whoisport-$env:TAG-x86_64-pc-windows-msvc.zip"
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          git fetch origin master
+          git checkout master
+          $m = Get-Content bucket/whoisport.json -Raw | ConvertFrom-Json
+          $m.version = $env:TAG.TrimStart('v')
+          $m.architecture.'64bit'.url = "https://github.com/$env:REPO/releases/download/$env:TAG/$zip"
+          $m.architecture.'64bit'.hash = $hash
+          $m | ConvertTo-Json -Depth 5 | Set-Content bucket/whoisport.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update Scoop manifest to $env:TAG"
+          git push origin master
