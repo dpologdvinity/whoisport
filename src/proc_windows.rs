@@ -1,6 +1,7 @@
 pub use crate::sysinfo_info::info;
 use std::io;
 use std::os::windows::process::CommandExt;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_INSUFFICIENT_BUFFER, HWND, LPARAM, NO_ERROR, WAIT_TIMEOUT,
 };
@@ -11,7 +12,8 @@ use windows_sys::Win32::NetworkManagement::IpHelper::{
 };
 use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows_sys::Win32::System::Console::{
-    AttachConsole, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+    AttachConsole, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent, GetConsoleProcessList,
+    SetConsoleCtrlHandler,
 };
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
@@ -124,16 +126,53 @@ unsafe extern "system" fn close_if_owned(hwnd: HWND, pid: LPARAM) -> BOOL {
 pub fn ask_exit(pid: u32) -> io::Result<()> {
     unsafe {
         EnumWindows(Some(close_if_owned), pid as LPARAM);
-        // If the target shares our console, the Ctrl+C reaches us too; ignore it.
-        SetConsoleCtrlHandler(None, 1);
     }
     // A console-less child attaches to the target's console and sends Ctrl+C there,
     // like pressing Ctrl+C in that terminal. Done in a child so our own console is untouched.
-    std::process::Command::new(std::env::current_exe()?)
+    let status = std::process::Command::new(std::env::current_exe()?)
         .args([HELPER_ARG, &pid.to_string()])
         .creation_flags(DETACHED_PROCESS)
         .status()?;
-    Ok(())
+    match status.code() {
+        Some(HELPER_SHARED_CONSOLE) => Err(io::Error::other(
+            "its console is shared with other programs, so Ctrl+C was not sent (use --force)",
+        )),
+        // No console to attach to (GUI app or service): WM_CLOSE was the only way to ask.
+        _ => Ok(()),
+    }
+}
+
+const HELPER_SHARED_CONSOLE: i32 = 3;
+
+/// Would Ctrl+C on the console listing `on_console` reach anything besides `target`, its
+/// descendants, plain shells, and this helper? Ctrl+C goes to every process on a console,
+/// so an unrelated program there (another dev server, a parent like `concurrently`, or
+/// the user's own whoisport) would be interrupted too.
+fn console_shared(target: u32, on_console: &[u32]) -> bool {
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let descends_from_target = |mut pid: u32| {
+        for _ in 0..64 {
+            if pid == target {
+                return true;
+            }
+            match sys.process(Pid::from_u32(pid)).and_then(|p| p.parent()) {
+                Some(parent) if parent.as_u32() != pid => pid = parent.as_u32(),
+                _ => return false,
+            }
+        }
+        false
+    };
+    let is_shell = |pid: u32| {
+        sys.process(Pid::from_u32(pid)).is_some_and(|p| {
+            let name = p.name().to_string_lossy().to_ascii_lowercase();
+            matches!(name.as_str(), "cmd.exe" | "powershell.exe" | "pwsh.exe")
+        })
+    };
+    let me = std::process::id();
+    on_console
+        .iter()
+        .any(|&pid| pid != me && !descends_from_target(pid) && !is_shell(pid))
 }
 
 /// Entry point for the Ctrl+C helper child spawned by `ask_exit`; exits if invoked as one.
@@ -145,13 +184,21 @@ pub fn run_helper_if_requested() {
     let Some(pid) = args.get(2).and_then(|p| p.parse().ok()) else {
         std::process::exit(2);
     };
-    let sent = unsafe {
+    unsafe {
         FreeConsole();
-        AttachConsole(pid) != 0
-            && SetConsoleCtrlHandler(None, 1) != 0
-            && GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) != 0
-    };
-    std::process::exit(if sent { 0 } else { 1 });
+        if AttachConsole(pid) == 0 {
+            std::process::exit(1);
+        }
+        let mut ids = [0u32; 64];
+        let n = GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) as usize;
+        // n > len means more processes than fit: certainly shared.
+        if n == 0 || n > ids.len() || console_shared(pid, &ids[..n]) {
+            std::process::exit(HELPER_SHARED_CONSOLE);
+        }
+        let sent =
+            SetConsoleCtrlHandler(None, 1) != 0 && GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) != 0;
+        std::process::exit(if sent { 0 } else { 1 });
+    }
 }
 
 pub fn terminate(pid: u32) -> io::Result<()> {
