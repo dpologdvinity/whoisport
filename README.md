@@ -40,6 +40,12 @@ cargo binstall whoisport   # prebuilt binary, no compiling
 cargo install whoisport    # build from source
 ```
 
+macOS or Linux, with [Homebrew](https://brew.sh):
+
+```sh
+brew install dpologdvinity/tap/whoisport
+```
+
 Windows, with [Scoop](https://scoop.sh):
 
 ```powershell
@@ -48,11 +54,11 @@ scoop install whoisport
 ```
 
 Or download a binary from the
-[Releases page](https://github.com/dpologdvinity/whoisport/releases): static Linux
-builds for x86_64 and aarch64, and a Windows x86_64 `.exe`.
+[Releases page](https://github.com/dpologdvinity/whoisport/releases): Linux (static,
+x86_64 and aarch64), macOS (Apple Silicon and Intel) and Windows (x86_64).
 
-Works on **Linux** (reads `/proc` directly, no runtime dependencies) and
-**Windows 10/11**.
+Works on **Linux** (reads `/proc` directly, no runtime dependencies), **macOS**
+(uses the built-in `lsof`) and **Windows 10/11**.
 
 ## Usage
 
@@ -81,7 +87,7 @@ How `--kill` asks, per platform:
 
 | Platform | `--kill`                                                        | `--force`          |
 |----------|-----------------------------------------------------------------|--------------------|
-| Linux    | `SIGTERM`                                                       | `SIGKILL`          |
+| Linux, macOS | `SIGTERM`                                                   | `SIGKILL`          |
 | Windows  | Ctrl+C in the process's console, and `WM_CLOSE` to its windows  | `TerminateProcess` |
 
 On Windows the Ctrl+C reaches every program in that console, exactly as if you
@@ -92,11 +98,8 @@ is listening at all), `2` invalid arguments, `3` a kill failed.
 
 Checks IPv4 and IPv6 TCP sockets in the LISTEN state. On Linux, processes owned
 by other users can't be inspected without `sudo`; they show up as `?`. On
-Windows, details of system services need an elevated terminal.
-
-## Not yet supported
-
-macOS.
+Windows, details of system services need an elevated terminal. On macOS,
+other users' listeners only appear when run with `sudo`.
 
 ## License
 
