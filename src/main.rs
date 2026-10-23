@@ -49,7 +49,7 @@ struct Args {
     /// Print results as a JSON array
     #[arg(long, conflicts_with = "kill")]
     json: bool,
-    /// Look at UDP instead of TCP (any bound socket with no remote peer counts)
+    /// Look at UDP instead of TCP (bound sockets with no remote peer; on Windows, every bound socket)
     #[arg(long)]
     udp: bool,
 }

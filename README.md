@@ -75,7 +75,7 @@ whoisport [<PORT>...] --udp        # UDP instead of TCP
 | `--kill`  | Ask the process to exit and wait up to 3 seconds.                   |
 | `--force` | With `--kill`: forcibly terminate it if asking did not work.        |
 | `--json`  | Print a JSON array with `port`, `proto`, `pid`, `ppid`, `user`, `cmd`, `cwd`, `uptime_secs`, `container`, `image`. |
-| `--udp`   | Look at UDP sockets instead of TCP. UDP has no listening state, so any bound socket without a remote peer counts. |
+| `--udp`   | Look at UDP sockets instead of TCP. UDP has no listening state, so any bound socket without a remote peer counts. Windows doesn't report UDP peers, so there every bound UDP socket is listed, including short-lived client ones. |
 
 Docker: when a port is published by a container, whoisport shows the container
 name and image (`docker  web (nginx:alpine)`), even when the `docker-proxy`
