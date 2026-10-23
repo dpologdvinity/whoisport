@@ -6,7 +6,40 @@ pub fn is_docker(cmd: &str) -> bool {
 }
 
 /// (host port, container name, image) for every port published by a running container.
+/// Is this Docker endpoint a daemon on this machine? Only a local daemon's containers
+/// can be publishing this machine's ports.
+pub fn is_local_endpoint(host: &str) -> bool {
+    let tcp_host = host
+        .strip_prefix("tcp://")
+        .map(|rest| rest.rsplit_once(':').map_or(rest, |(h, _)| h));
+    host.starts_with("unix://")
+        || host.starts_with("npipe://")
+        || matches!(tcp_host, Some("localhost" | "127.0.0.1" | "[::1]"))
+}
+
+/// The endpoint `docker` would talk to: $DOCKER_HOST, else the current context's.
+fn endpoint() -> Option<String> {
+    if let Ok(host) = std::env::var("DOCKER_HOST") {
+        return Some(host);
+    }
+    let out = Command::new("docker")
+        .args([
+            "context",
+            "inspect",
+            "--format",
+            "{{.Endpoints.docker.Host}}",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 pub fn published(udp: bool) -> Vec<(u16, String, String)> {
+    // A remote context (ssh://, a remote tcp:// host) lists another machine's containers.
+    if !endpoint().is_some_and(|e| is_local_endpoint(&e)) {
+        return Vec::new();
+    }
     let out = Command::new("docker")
         .args(["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}"])
         .output();
@@ -58,5 +91,16 @@ mod tests {
         assert_eq!(host_ports(p, false), vec![8080]);
         assert_eq!(host_ports(p, true), vec![9000, 9001]);
         assert!(host_ports("", false).is_empty());
+    }
+
+    #[test]
+    fn only_local_endpoints_count() {
+        assert!(is_local_endpoint("unix:///var/run/docker.sock"));
+        assert!(is_local_endpoint("npipe:////./pipe/docker_engine"));
+        assert!(is_local_endpoint("tcp://127.0.0.1:2375"));
+        assert!(is_local_endpoint("tcp://localhost:2376"));
+        assert!(!is_local_endpoint("ssh://me@build-box"));
+        assert!(!is_local_endpoint("tcp://10.0.0.5:2376"));
+        assert!(!is_local_endpoint(""));
     }
 }
