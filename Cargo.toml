@@ -5,6 +5,7 @@ edition = "2024"
 description = "Show what is listening on a TCP port, and optionally kill it"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/dpologdvinity/whoisport"
 authors = ["Kaitlyn Bassford"]
 keywords = ["port", "process", "cli", "lsof", "devtools"]
 categories = ["command-line-utilities", "development-tools"]
