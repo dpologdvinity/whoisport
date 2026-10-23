@@ -168,3 +168,32 @@ fn udp_flag_finds_bound_socket() {
     // ...and it is not a TCP listener
     assert_eq!(run(&[&port]).1, Some(1));
 }
+
+#[cfg(unix)]
+#[test]
+fn kill_spares_parent_that_shares_the_socket() {
+    // The parent listens, then forks; the child inherits the socket, as with a supervisor.
+    let script = "import os,socket,time;s=socket.socket();s.bind(('127.0.0.1',0));s.listen();\
+                  pid=os.fork();\nif pid==0:\n time.sleep(60)\nelse:\n print(s.getsockname()[1],pid,flush=True);time.sleep(60)";
+    let mut parent = Command::new("python3")
+        .args(["-c", script])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(parent.stdout.take().unwrap()),
+        &mut line,
+    )
+    .unwrap();
+    let mut f = line.split_whitespace();
+    let (port, child) = (f.next().unwrap().to_string(), f.next().unwrap().to_string());
+    let (out, code) = run(&[&port, "--kill"]);
+    let parent_alive = parent.try_wait().unwrap().is_none();
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.contains(&format!("pid {child}: exited after")), "{out}");
+    assert!(out.contains("not killed: it is a parent of pid"), "{out}");
+    assert!(parent_alive, "{out}");
+}

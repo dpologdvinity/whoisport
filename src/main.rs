@@ -106,6 +106,40 @@ fn kill(pid: u32, force: bool) -> bool {
     false
 }
 
+/// Is this the system or user service manager? It can hold a socket it activates.
+fn is_service_manager(pid: u32, cmd: &str) -> bool {
+    let exe = cmd.split_whitespace().next().unwrap_or("");
+    let name = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    pid == 1 || name == "systemd" || name == "launchd"
+}
+
+/// Is `ancestor` somewhere up `pid`'s parent chain?
+fn is_ancestor(ancestor: u32, mut pid: u32) -> bool {
+    for _ in 0..64 {
+        match proc::info(pid).map(|i| i.ppid) {
+            Some(parent) if parent == ancestor => return true,
+            Some(parent) if parent > 1 && parent != pid => pid = parent,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Why a holder of the socket must not be signalled. Several processes can hold one
+/// listening socket when a supervisor or socket-activating service manager hands it to
+/// the real server; signalling the supervisor can take down far more than the server.
+fn skip_reason(i: &Info, holders: &[u32]) -> Option<String> {
+    if is_service_manager(i.pid, &i.cmd) {
+        return Some("it is a service manager".into());
+    }
+    let child = holders
+        .iter()
+        .find(|&&other| other != i.pid && is_ancestor(i.pid, other))?;
+    Some(format!(
+        "it is a parent of pid {child}, which also holds this port"
+    ))
+}
+
 fn to_json(
     port: u16,
     proto: &str,
@@ -221,6 +255,12 @@ fn main() -> ExitCode {
         if missing.contains(port) {
             println!("nothing listening on :{}\n", label(*port));
         }
+        let holders: Vec<u32> = rows
+            .iter()
+            .filter(|r| r.0 == *port)
+            .filter_map(|r| r.2.as_ref().map(|i| i.pid))
+            .collect();
+        let mut signalled_any = false;
         for (_, _, info) in rows.iter().filter(|r| r.0 == *port) {
             let Some(i) = info else {
                 let docker_line = container(*port, info)
@@ -246,13 +286,41 @@ fn main() -> ExitCode {
                 i.cwd,
                 fmt_duration(i.uptime_secs)
             );
-            if args.kill && !killed.contains(&i.pid) {
+            if !args.kill {
+                continue;
+            }
+            if let Some(reason) = skip_reason(i, &holders) {
+                eprintln!("pid {}: not killed: {reason}", i.pid);
+                continue;
+            }
+            signalled_any = true;
+            if !killed.contains(&i.pid) {
                 killed.push(i.pid); // one process can hold several requested ports
                 if !kill(i.pid, args.force) {
                     code = 3;
                 }
             }
         }
+        if args.kill && !holders.is_empty() && !signalled_any {
+            code = 3; // every holder was skipped, so the port is still taken
+        }
     }
     ExitCode::from(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_managers_are_recognised() {
+        assert!(is_service_manager(1, "/sbin/init"));
+        assert!(is_service_manager(812, "/usr/lib/systemd/systemd --user"));
+        assert!(is_service_manager(90, "/sbin/launchd"));
+        assert!(!is_service_manager(4242, "python3 -m http.server 3000"));
+        assert!(!is_service_manager(
+            4243,
+            "/usr/lib/systemd/systemd-resolved"
+        ));
+    }
 }
