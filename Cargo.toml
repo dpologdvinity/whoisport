@@ -26,6 +26,23 @@ pkg-fmt = "tgz"
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.zip"
 pkg-fmt = "zip"
 
+# Debian/Ubuntu package (`cargo deb`), attached to each GitHub release.
+[package.metadata.deb]
+maintainer = "Kaitlyn Bassford"
+section = "utils"
+extended-description = "Lists every listening TCP or UDP port with the process behind it (command line, working directory, user, uptime), shows details for specific ports, and can ask the process to exit or terminate it."
+assets = [
+    ["target/release/whoisport", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/whoisport/README.md", "644"],
+]
+
+# Fedora/RHEL package (`cargo generate-rpm`), attached to each GitHub release.
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/whoisport", dest = "/usr/bin/whoisport", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/whoisport/README.md", mode = "644", doc = true },
+]
+
 [profile.release]
 lto = true
 codegen-units = 1

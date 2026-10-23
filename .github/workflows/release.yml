@@ -34,13 +34,17 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo install cross --locked --version 0.2.5
       - run: cross build --release --target ${{ matrix.target }}
+      - run: cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1
       - env:
           TAG: ${{ github.ref_name }}
           TARGET: ${{ matrix.target }}
           GH_TOKEN: ${{ github.token }}
         run: |
           tar -czf "whoisport-$TAG-$TARGET.tar.gz" -C "target/$TARGET/release" whoisport
-          gh release upload "$TAG" "whoisport-$TAG-$TARGET.tar.gz" --clobber
+          # .deb / .rpm from the same static binary (no extra build).
+          deb=$(cargo deb --no-build --no-strip --target "$TARGET")
+          cargo generate-rpm --target "$TARGET"
+          gh release upload "$TAG" "whoisport-$TAG-$TARGET.tar.gz" "$deb" target/"$TARGET"/generate-rpm/*.rpm --clobber
   macos:
     needs: create
     runs-on: macos-latest
