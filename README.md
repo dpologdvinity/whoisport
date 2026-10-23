@@ -38,6 +38,7 @@ been running, which is usually what you need to decide whether to kill it.
 ```sh
 cargo binstall whoisport   # prebuilt binary, no compiling
 cargo install whoisport    # build from source
+pipx install whoisport     # or: uvx whoisport, pip install whoisport
 ```
 
 macOS or Linux, with [Homebrew](https://brew.sh):
