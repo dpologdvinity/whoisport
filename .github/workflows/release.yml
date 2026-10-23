@@ -153,6 +153,9 @@ jobs:
   # Publishes with npm trusted publishing (OIDC): no token is stored anywhere.
   npm:
     needs: [build, macos, windows]
+    # Off until trusted publishing is set up for every package on npmjs.com;
+    # then set the repository variable NPM_PUBLISH to "true".
+    if: vars.NPM_PUBLISH == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
