@@ -122,6 +122,7 @@ pub fn info(pid: u32) -> Option<Info> {
         cmd,
         cwd: fs::read_link(format!("{base}/cwd")).map_or("?".into(), |p| p.display().to_string()),
         uptime_secs: (boot_secs - start_ticks as f64 / hz).max(0.0) as u64,
+        started: start_ticks,
     })
 }
 

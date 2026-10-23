@@ -42,5 +42,6 @@ pub fn info(pid: u32) -> Option<Info> {
         cmd,
         cwd: proc.cwd().map_or("?".into(), |c| c.display().to_string()),
         uptime_secs: proc.run_time(),
+        started: proc.start_time(),
     })
 }
