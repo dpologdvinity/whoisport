@@ -244,3 +244,35 @@ fn ctrl_c_is_not_sent_to_a_shared_console() {
         "the shell's ping must not have been interrupted: {out}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn hostile_argv_is_shown_escaped_not_hidden() {
+    use std::os::unix::ffi::OsStrExt;
+    let script = "import socket,time;s=socket.socket();s.bind(('127.0.0.1',0));s.listen();\
+                  print(s.getsockname()[1],flush=True);time.sleep(60)";
+    // An escape sequence plus a byte that is not valid UTF-8.
+    let arg = std::ffi::OsStr::from_bytes(b"\x1b[2Jfake\xff");
+    let mut child = Command::new("python3")
+        .args(["-c", script])
+        .arg(arg)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut port = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(child.stdout.take().unwrap()),
+        &mut port,
+    )
+    .unwrap();
+    let (out, code) = run(&[port.trim()]);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.contains(&format!("pid     {}", child.id())), "{out}");
+    assert!(out.contains("\\u{1b}[2Jfake"), "{out}");
+    assert!(
+        !out.contains('\x1b'),
+        "raw escape reached the terminal: {out}"
+    );
+}
