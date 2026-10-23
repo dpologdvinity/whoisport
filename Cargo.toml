@@ -1,6 +1,6 @@
 [package]
 name = "whoisport"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Show what is listening on a TCP port, and optionally kill it"
 license = "MIT"
