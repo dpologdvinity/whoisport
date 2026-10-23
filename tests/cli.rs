@@ -35,6 +35,39 @@ fn exits_one_when_nothing_listening() {
     assert!(stdout.contains("nothing listening"), "{stdout}");
 }
 
+#[test]
+fn no_args_lists_all_listeners() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let (stdout, code) = run(&[]);
+    assert_eq!(code, Some(0));
+    let row = format!("{port:<6} {:<8}", std::process::id());
+    assert!(stdout.lines().any(|l| l.starts_with(&row)), "{stdout}");
+}
+
+#[test]
+fn multiple_ports_exit_one_if_any_missing() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let live = l.local_addr().unwrap().port().to_string();
+    let dead = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port().to_string()
+    };
+    let (stdout, code) = run(&[&live, &dead]);
+    assert_eq!(code, Some(1));
+    assert!(stdout.contains(&format!("port    {live}")), "{stdout}");
+    assert!(
+        stdout.contains(&format!("nothing listening on :{dead}")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn kill_requires_a_port() {
+    let (_, code) = run(&["--kill"]);
+    assert_eq!(code, Some(2)); // clap usage error; must never mean "kill everything"
+}
+
 /// Spawn a python listener (optionally ignoring SIGTERM); returns the child and its port.
 fn spawn_listener(ignore_term: bool) -> (std::process::Child, String) {
     let ign = if ignore_term {

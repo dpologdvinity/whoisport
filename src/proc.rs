@@ -1,5 +1,5 @@
+use std::collections::HashMap;
 use std::fs;
-use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
 
 pub struct Info {
@@ -11,62 +11,69 @@ pub struct Info {
     pub uptime_secs: u64,
 }
 
-/// Socket inodes of TCP sockets in LISTEN state on `port`, from a /proc/net/tcp{,6} dump.
-pub fn listen_inodes(table: &str, port: u16) -> Vec<u64> {
+/// (port, socket inode) of TCP sockets in LISTEN state, from a /proc/net/tcp{,6} dump.
+pub fn listen_sockets(table: &str) -> Vec<(u16, u64)> {
     table
         .lines()
         .skip(1)
         .filter_map(|line| {
             let f: Vec<&str> = line.split_whitespace().collect();
-            let local_port = u16::from_str_radix(f.get(1)?.rsplit(':').next()?, 16).ok()?;
-            (f.get(3)? == &"0A" && local_port == port).then(|| f.get(9)?.parse().ok())?
+            let port = u16::from_str_radix(f.get(1)?.rsplit(':').next()?, 16).ok()?;
+            (f.get(3)? == &"0A").then(|| Some((port, f.get(9)?.parse().ok()?)))?
         })
         .collect()
 }
 
-/// PIDs owning any of `inodes`, plus whether some processes were unreadable (other users').
-pub fn pids_for_inodes(inodes: &[u64]) -> (Vec<u32>, bool) {
-    let targets: Vec<String> = inodes.iter().map(|i| format!("socket:[{i}]")).collect();
-    let mut pids = Vec::new();
-    let mut hidden = false;
+/// socket inode -> owning PIDs, for every process whose fds we can read.
+fn socket_owners() -> HashMap<u64, Vec<u32>> {
+    let mut owners: HashMap<u64, Vec<u32>> = HashMap::new();
     let Ok(dir) = fs::read_dir("/proc") else {
-        return (pids, hidden);
+        return owners;
     };
     for entry in dir.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|n| n.parse::<u32>().ok())
-        else {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) else {
             continue;
         };
-        match fs::read_dir(entry.path().join("fd")) {
-            Ok(fds) => {
-                let owns = fds.flatten().any(|fd| {
-                    fs::read_link(fd.path())
-                        .is_ok_and(|l| targets.iter().any(|t| l.to_str() == Some(t)))
-                });
-                if owns {
+        // Unreadable (other users') or exited mid-scan: skip; its sockets show as ownerless.
+        let Ok(fds) = fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            let Ok(link) = fs::read_link(fd.path()) else {
+                continue;
+            };
+            let inode = link
+                .to_str()
+                .and_then(|l| l.strip_prefix("socket:[")?.strip_suffix(']')?.parse().ok());
+            if let Some(inode) = inode {
+                let pids = owners.entry(inode).or_default();
+                if !pids.contains(&pid) {
                     pids.push(pid);
                 }
             }
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => hidden = true,
-            Err(_) => {} // process exited mid-scan
         }
     }
-    (pids, hidden)
+    owners
 }
 
-pub fn find_listeners(port: u16) -> (Vec<u32>, bool) {
-    let inodes: Vec<u64> = ["/proc/net/tcp", "/proc/net/tcp6"]
+/// Every TCP listener as (port, pid), sorted; pid is None when the owner is unreadable.
+pub fn listeners() -> Vec<(u16, Option<u32>)> {
+    let sockets: Vec<(u16, u64)> = ["/proc/net/tcp", "/proc/net/tcp6"]
         .iter()
         .filter_map(|p| fs::read_to_string(p).ok())
-        .flat_map(|t| listen_inodes(&t, port))
+        .flat_map(|t| listen_sockets(&t))
         .collect();
-    if inodes.is_empty() {
-        return (vec![], false);
-    }
-    pids_for_inodes(&inodes)
+    let owners = socket_owners();
+    let mut out: Vec<(u16, Option<u32>)> = sockets
+        .iter()
+        .flat_map(|(port, inode)| match owners.get(inode) {
+            Some(pids) => pids.iter().map(|&p| (*port, Some(p))).collect(),
+            None => vec![(*port, None)],
+        })
+        .collect();
+    out.sort();
+    out.dedup(); // the same process often listens on both IPv4 and IPv6
+    out
 }
 
 /// (ppid, start time in clock ticks since boot) from a /proc/<pid>/stat line.
@@ -138,10 +145,9 @@ mod tests {
 ";
 
     #[test]
-    fn listen_inodes_matches_port_and_state() {
-        assert_eq!(listen_inodes(TABLE, 3000), vec![12345]); // 0x0BB8; ESTABLISHED row 67890 skipped
-        assert_eq!(listen_inodes(TABLE, 8080), vec![11111]);
-        assert!(listen_inodes(TABLE, 1).is_empty());
+    fn listen_sockets_keeps_only_listen_state() {
+        // 0x0BB8 = 3000, 0x1F90 = 8080; the ESTABLISHED row (inode 67890) is skipped
+        assert_eq!(listen_sockets(TABLE), vec![(3000, 12345), (8080, 11111)]);
     }
 
     #[test]
@@ -154,8 +160,7 @@ mod tests {
     fn finds_own_listener() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
-        let (pids, _) = find_listeners(port);
-        assert!(pids.contains(&std::process::id()));
+        assert!(listeners().contains(&(port, Some(std::process::id()))));
         assert_eq!(info(std::process::id()).unwrap().pid, std::process::id());
     }
 }
