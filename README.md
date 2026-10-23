@@ -90,8 +90,9 @@ How `--kill` asks, per platform:
 | Linux, macOS | `SIGTERM`                                                   | `SIGKILL`          |
 | Windows  | Ctrl+C in the process's console, and `WM_CLOSE` to its windows  | `TerminateProcess` |
 
-On Windows the Ctrl+C reaches every program in that console, exactly as if you
-pressed Ctrl+C in that terminal window.
+On Windows, Ctrl+C reaches every program attached to a console, so whoisport only
+sends it when the target's console holds nothing but the target, its child
+processes and a shell. Otherwise it says so and leaves the choice of `--force` to you.
 
 Exit codes: `0` success, `1` a requested port had nothing listening (or nothing
 is listening at all), `2` invalid arguments, `3` a kill failed.

@@ -197,3 +197,50 @@ fn kill_spares_parent_that_shares_the_socket() {
     assert!(out.contains("not killed: it is a parent of pid"), "{out}");
     assert!(parent_alive, "{out}");
 }
+
+#[cfg(windows)]
+#[test]
+fn ctrl_c_is_not_sent_to_a_shared_console() {
+    use std::os::windows::process::CommandExt;
+    // cmd runs the listener and an unrelated `ping` on one new console; Ctrl+C there
+    // would also stop the ping, so whoisport must refuse and say so.
+    let dir = std::env::temp_dir().join(format!("whoisport-shared-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let port_file = dir.join("port");
+    let script = format!(
+        "import socket,time;s=socket.socket();s.bind(('127.0.0.1',0));s.listen();\
+         open(r'{}','w').write(str(s.getsockname()[1]));time.sleep(60)",
+        port_file.display()
+    );
+    let mut cmd = Command::new("cmd.exe");
+    cmd.raw_arg(format!(
+        "/c start /b python -c \"{script}\" & ping -n 60 127.0.0.1 >nul"
+    ))
+    .creation_flags(0x10); // CREATE_NEW_CONSOLE
+    let mut shell = cmd.spawn().unwrap();
+    let port = (0..100)
+        .find_map(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::fs::read_to_string(&port_file)
+                .ok()
+                .filter(|p| !p.is_empty())
+        })
+        .expect("listener did not start");
+    let (out, code) = run(&[&port, "--kill"]);
+    let shell_alive = shell.try_wait().unwrap().is_none();
+    run(&[&port, "--kill", "--force"]);
+    let _ = Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &shell.id().to_string()])
+        .output();
+    let _ = shell.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(3), "{out}");
+    assert!(
+        out.contains("console is shared with other programs"),
+        "{out}"
+    );
+    assert!(
+        shell_alive,
+        "the shell's ping must not have been interrupted: {out}"
+    );
+}
