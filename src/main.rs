@@ -336,4 +336,12 @@ mod tests {
             "/usr/lib/systemd/systemd-resolved"
         ));
     }
+
+    #[test]
+    fn same_process_requires_matching_start_time() {
+        let me = std::process::id();
+        let started = proc::info(me).unwrap().started;
+        assert!(same_process(me, started));
+        assert!(!same_process(me, started + 1)); // same pid, different process
+    }
 }
