@@ -68,6 +68,17 @@ fn fmt_duration(s: u64) -> String {
     }
 }
 
+/// Text from other processes (argv, paths) can contain escape sequences that would
+/// rewrite the terminal; show control characters escaped instead.
+fn shown(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c.is_control() {
+            true => c.escape_default().collect::<Vec<_>>(),
+            false => vec![c],
+        })
+        .collect()
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -245,15 +256,15 @@ fn main() -> ExitCode {
                     println!(
                         "{port_label:<w$} {:<8} {:<10} {}",
                         i.pid,
-                        truncate(&i.user, 10),
-                        truncate(&cmd, 80)
+                        truncate(&shown(&i.user), 10),
+                        truncate(&shown(&cmd), 80)
                     )
                 }
                 None => {
                     let cmd = container(*port, info).map_or("?".into(), |(name, image)| {
                         format!("docker: {name} ({image})")
                     });
-                    println!("{port_label:<w$} {:<8} {:<10} {cmd}", "?", "?")
+                    println!("{port_label:<w$} {:<8} {:<10} {}", "?", "?", shown(&cmd))
                 }
             }
         }
@@ -274,29 +285,33 @@ fn main() -> ExitCode {
             .filter_map(|r| r.2.as_ref().map(|i| i.pid))
             .collect();
         let mut signalled_any = false;
-        for (_, _, info) in rows.iter().filter(|r| r.0 == *port) {
+        for (_, pid, info) in rows.iter().filter(|r| r.0 == *port) {
+            let docker_line = container(*port, info).map_or(String::new(), |(n, img)| {
+                format!("docker  {} ({})\n", shown(&n), shown(&img))
+            });
             let Some(i) = info else {
-                let docker_line = container(*port, info)
-                    .map_or(String::new(), |(n, img)| format!("docker  {n} ({img})\n"));
-                println!(
-                    "port    {}\npid     ? ({HIDDEN})\n{docker_line}",
-                    label(*port)
-                );
+                let why = match pid {
+                    Some(p) => format!("{p} (details unavailable; it may have just exited)"),
+                    None => format!("? ({HIDDEN})"),
+                };
+                println!("port    {}\npid     {why}\n{docker_line}", label(*port));
                 if args.kill {
+                    eprintln!(
+                        "port {}: not killed: its owner could not be inspected",
+                        label(*port)
+                    );
                     code = 3;
                 }
                 continue;
             };
-            let docker_line = container(*port, info)
-                .map_or(String::new(), |(n, img)| format!("docker  {n} ({img})\n"));
             println!(
                 "port    {}\npid     {}\nparent  {}\nuser    {}\ncmd     {}\n{docker_line}cwd     {}\nuptime  {}\n",
                 label(*port),
                 i.pid,
                 i.ppid,
-                i.user,
-                i.cmd,
-                i.cwd,
+                shown(&i.user),
+                shown(&i.cmd),
+                shown(&i.cwd),
                 fmt_duration(i.uptime_secs)
             );
             if !args.kill {
@@ -335,6 +350,15 @@ mod tests {
             4243,
             "/usr/lib/systemd/systemd-resolved"
         ));
+    }
+
+    #[test]
+    fn control_characters_are_escaped() {
+        assert_eq!(
+            shown("ok \u{1b}]52;c;aGk=\u{7}x"),
+            "ok \\u{1b}]52;c;aGk=\\u{7}x"
+        );
+        assert_eq!(shown("héllo wörld"), "héllo wörld");
     }
 
     #[test]

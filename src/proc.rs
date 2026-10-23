@@ -98,9 +98,9 @@ fn user_name(uid: u32) -> String {
 pub fn info(pid: u32) -> Option<Info> {
     let base = format!("/proc/{pid}");
     let (ppid, start_ticks) = parse_stat(&fs::read_to_string(format!("{base}/stat")).ok()?)?;
-    let cmd = fs::read_to_string(format!("{base}/cmdline"))
-        .ok()?
-        .replace('\0', " ");
+    // Arguments are arbitrary bytes, not necessarily UTF-8.
+    let cmd =
+        String::from_utf8_lossy(&fs::read(format!("{base}/cmdline")).ok()?).replace('\0', " ");
     let cmd = match cmd.trim() {
         "" => fs::read_to_string(format!("{base}/comm"))
             .ok()?
