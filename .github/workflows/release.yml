@@ -11,7 +11,7 @@ jobs:
       matrix:
         target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -21,6 +21,6 @@ jobs:
           TAG: ${{ github.ref_name }}
           TARGET: ${{ matrix.target }}
         run: tar -czf "whoisport-$TAG-$TARGET.tar.gz" -C "target/$TARGET/release" whoisport
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: whoisport-*.tar.gz
