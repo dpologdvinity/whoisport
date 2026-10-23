@@ -149,3 +149,32 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+  # npm (also pnpm, yarn, bun): a launcher package plus one package per platform binary.
+  # Publishes with npm trusted publishing (OIDC): no token is stored anywhere.
+  npm:
+    needs: [build, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+      - env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -D assets -p '*.tar.gz' -p '*.zip'
+          node npm/build.mjs "${TAG#v}" assets dist
+          # Platform packages first, so the launcher's optional dependencies exist.
+          for dir in dist/whoisport-*/ dist/whoisport/; do
+            name=$(node -p "require('./$dir/package.json').name")
+            if npm view "$name@${TAG#v}" version >/dev/null 2>&1; then
+              echo "$name@${TAG#v} already published"; continue
+            fi
+            (cd "$dir" && npm publish --provenance --access public)
+          done
