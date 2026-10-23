@@ -46,6 +46,14 @@ macOS or Linux, with [Homebrew](https://brew.sh):
 brew install dpologdvinity/tap/whoisport
 ```
 
+Debian/Ubuntu or Fedora/RHEL: download the `.deb` or `.rpm` for your architecture
+from the [Releases page](https://github.com/dpologdvinity/whoisport/releases), then
+
+```sh
+sudo apt install ./whoisport_*.deb     # Debian, Ubuntu
+sudo dnf install ./whoisport-*.rpm     # Fedora, RHEL
+```
+
 Windows, with [Scoop](https://scoop.sh):
 
 ```powershell
