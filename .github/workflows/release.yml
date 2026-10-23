@@ -5,7 +5,24 @@ on:
 permissions:
   contents: write
 jobs:
+  # Check the tag, test, and create the release once, so the build jobs only upload to it.
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          [ "v$version" = "$TAG" ] || { echo "tag $TAG does not match Cargo.toml version $version"; exit 1; }
+      - run: cargo test
+      - env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
   build:
+    needs: create
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -15,16 +32,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo install cross --locked
+      - run: cargo install cross --locked --version 0.2.5
       - run: cross build --release --target ${{ matrix.target }}
       - env:
           TAG: ${{ github.ref_name }}
           TARGET: ${{ matrix.target }}
-        run: tar -czf "whoisport-$TAG-$TARGET.tar.gz" -C "target/$TARGET/release" whoisport
-      - uses: softprops/action-gh-release@v3
-        with:
-          files: whoisport-*.tar.gz
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf "whoisport-$TAG-$TARGET.tar.gz" -C "target/$TARGET/release" whoisport
+          gh release upload "$TAG" "whoisport-$TAG-$TARGET.tar.gz" --clobber
   macos:
+    needs: create
     runs-on: macos-latest
     strategy:
       matrix:
@@ -38,11 +56,12 @@ jobs:
       - env:
           TAG: ${{ github.ref_name }}
           TARGET: ${{ matrix.target }}
-        run: tar -czf "whoisport-$TAG-$TARGET.tar.gz" -C "target/$TARGET/release" whoisport
-      - uses: softprops/action-gh-release@v3
-        with:
-          files: whoisport-*.tar.gz
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf "whoisport-$TAG-$TARGET.tar.gz" -C "target/$TARGET/release" whoisport
+          gh release upload "$TAG" "whoisport-$TAG-$TARGET.tar.gz" --clobber
   windows:
+    needs: create
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -50,11 +69,12 @@ jobs:
       - run: cargo build --release --target x86_64-pc-windows-msvc
       - env:
           TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: Compress-Archive -Path target/x86_64-pc-windows-msvc/release/whoisport.exe -DestinationPath "whoisport-$env:TAG-x86_64-pc-windows-msvc.zip"
-      - uses: softprops/action-gh-release@v3
-        with:
-          files: whoisport-*.zip
+        run: |
+          $zip = "whoisport-$env:TAG-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/whoisport.exe -DestinationPath $zip
+          gh release upload $env:TAG $zip --clobber
       # Point the Scoop bucket (bucket/whoisport.json on master) at the new zip.
       - env:
           TAG: ${{ github.ref_name }}
@@ -70,6 +90,8 @@ jobs:
           $m.architecture.'64bit'.url = "https://github.com/$env:REPO/releases/download/$env:TAG/$zip"
           $m.architecture.'64bit'.hash = $hash
           $m | ConvertTo-Json -Depth 5 | Set-Content bucket/whoisport.json
+          git diff --quiet bucket/whoisport.json
+          if ($LASTEXITCODE -eq 0) { exit 0 } # already up to date (re-run)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Update Scoop manifest to $env:TAG"
