@@ -289,6 +289,14 @@ fn main() -> ExitCode {
             let docker_line = container(*port, info).map_or(String::new(), |(n, img)| {
                 format!("docker  {} ({})\n", shown(&n), shown(&img))
             });
+            // Killing docker-proxy only breaks the port mapping; the container keeps running.
+            if let (true, Some((name, _))) = (args.kill, container(*port, info)) {
+                let name = shown(&name);
+                eprintln!(
+                    "port {}: published by container {name}; to stop it, run: docker stop {name}",
+                    label(*port)
+                );
+            }
             let Some(i) = info else {
                 let why = match pid {
                     Some(p) => format!("{p} (details unavailable; it may have just exited)"),
