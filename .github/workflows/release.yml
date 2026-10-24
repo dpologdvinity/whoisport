@@ -3,11 +3,14 @@ on:
   push:
     tags: ["v*"]
 permissions:
-  contents: write
+  contents: read
 jobs:
-  # Check the tag, test, and create the release once, so the build jobs only upload to it.
+  # Check the tag, test, and create a DRAFT release once; build jobs only upload to it.
+  # Nothing is public (GitHub release, Scoop, PyPI, npm) until every build has succeeded.
   create:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -20,9 +23,11 @@ jobs:
       - env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
-        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+        run: gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --verify-tag --title "$TAG" --generate-notes
   build:
     needs: create
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,6 +52,8 @@ jobs:
           gh release upload "$TAG" "whoisport-$TAG-$TARGET.tar.gz" "$deb" target/"$TARGET"/generate-rpm/*.rpm --clobber
   macos:
     needs: create
+    permissions:
+      contents: write
     runs-on: macos-latest
     strategy:
       matrix:
@@ -66,6 +73,8 @@ jobs:
           gh release upload "$TAG" "whoisport-$TAG-$TARGET.tar.gz" --clobber
   windows:
     needs: create
+    permissions:
+      contents: write
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -79,27 +88,6 @@ jobs:
           $zip = "whoisport-$env:TAG-x86_64-pc-windows-msvc.zip"
           Compress-Archive -Path target/x86_64-pc-windows-msvc/release/whoisport.exe -DestinationPath $zip
           gh release upload $env:TAG $zip --clobber
-      # Point the Scoop bucket (bucket/whoisport.json on master) at the new zip.
-      - env:
-          TAG: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
-        shell: pwsh
-        run: |
-          $zip = "whoisport-$env:TAG-x86_64-pc-windows-msvc.zip"
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          git fetch origin master
-          git checkout master
-          $m = Get-Content bucket/whoisport.json -Raw | ConvertFrom-Json
-          $m.version = $env:TAG.TrimStart('v')
-          $m.architecture.'64bit'.url = "https://github.com/$env:REPO/releases/download/$env:TAG/$zip"
-          $m.architecture.'64bit'.hash = $hash
-          $m | ConvertTo-Json -Depth 5 | Set-Content bucket/whoisport.json
-          git diff --quiet bucket/whoisport.json
-          if ($LASTEXITCODE -eq 0) { exit 0 } # already up to date (re-run)
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Update Scoop manifest to $env:TAG"
-          git push origin master
   # PyPI: wheels that just contain the binary (see pyproject.toml).
   pypi-wheels:
     needs: create
@@ -114,7 +102,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
           manylinux: auto
@@ -128,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           command: sdist
           args: --out dist
@@ -136,8 +124,44 @@ jobs:
         with:
           name: sdist
           path: dist
+  # Final gate: all builds succeeded -> publish the release, then update Scoop.
+  publish:
+    needs: [build, macos, windows, pypi-wheels, pypi-sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false
+      # Point the Scoop bucket (bucket/whoisport.json on master) at the new zip,
+      # unless this is a re-run of an older tag (that would downgrade it).
+      - env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "$(gh release view --repo "$REPO" --json tagName -q .tagName)" = "$TAG" ] || { echo "$TAG is not the latest release; leaving Scoop alone"; exit 0; }
+          zip="whoisport-$TAG-x86_64-pc-windows-msvc.zip"
+          gh release download "$TAG" --repo "$REPO" -p "$zip"
+          hash=$(sha256sum "$zip" | cut -d' ' -f1)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch -q origin master && git checkout -q -B master origin/master
+            jq --arg v "${TAG#v}" --arg u "https://github.com/$REPO/releases/download/$TAG/$zip" --arg h "$hash" \
+              '.version = $v | .architecture."64bit".url = $u | .architecture."64bit".hash = $h' bucket/whoisport.json > m.json
+            mv m.json bucket/whoisport.json
+            git diff --quiet bucket/whoisport.json && { echo "Scoop manifest already current"; exit 0; }
+            git commit -q -am "Update Scoop manifest to $TAG"
+            git push -q origin master && exit 0
+            echo "push raced with another commit (attempt $attempt); retrying"
+          done
+          exit 1
   pypi-publish:
-    needs: [pypi-wheels, pypi-sdist]
+    needs: publish
     runs-on: ubuntu-latest
     # PyPI trusted publishing: no token; PyPI trusts this repo + workflow + environment.
     environment: pypi
@@ -148,11 +172,13 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true
   # npm (also pnpm, yarn, bun): a launcher package plus one package per platform binary.
   # Publishes with npm trusted publishing (OIDC): no token is stored anywhere.
   npm:
-    needs: [build, macos, windows]
+    needs: publish
     # Off until trusted publishing is set up for every package on npmjs.com;
     # then set the repository variable NPM_PUBLISH to "true".
     if: vars.NPM_PUBLISH == 'true'
