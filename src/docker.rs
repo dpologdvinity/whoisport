@@ -5,7 +5,6 @@ pub fn is_docker(cmd: &str) -> bool {
     cmd.contains("docker-proxy") || cmd.contains("com.docker.backend")
 }
 
-/// (host port, container name, image) for every port published by a running container.
 /// Is this Docker endpoint a daemon on this machine? Only a local daemon's containers
 /// can be publishing this machine's ports.
 pub fn is_local_endpoint(host: &str) -> bool {
@@ -35,6 +34,7 @@ fn endpoint() -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// (host port, container name, image) for every port published by a running container.
 pub fn published(udp: bool) -> Vec<(u16, String, String)> {
     // A remote context (ssh://, a remote tcp:// host) lists another machine's containers.
     if !endpoint().is_some_and(|e| is_local_endpoint(&e)) {
