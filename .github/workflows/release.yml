@@ -1,3 +1,14 @@
+# Release pipeline. Runs when a `v*` tag is pushed.
+#
+#   create ──► build (Linux musl + .deb/.rpm) ─┐
+#          ├─► macos (Apple silicon, Intel)    ├─► publish ──► pypi-publish
+#          ├─► windows                         │   (release      (PyPI, trusted
+#          └─► pypi-wheels / pypi-sdist ───────┘    goes public,  publishing)
+#                                                   Scoop updated) └─► npm (if enabled)
+#
+# Nothing is public until every build succeeded: `create` makes a DRAFT release, the build
+# jobs upload to it, and only `publish` makes it public. Homebrew follows on its own (the
+# tap polls releases). crates.io is published manually with `cargo publish`.
 name: Release
 on:
   push:

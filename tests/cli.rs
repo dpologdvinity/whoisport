@@ -1,6 +1,20 @@
+//! End-to-end tests: run the real `whoisport` binary against real listening sockets.
+//!
+//! Each test opens its own listener (a Rust `TcpListener`/`UdpSocket`, or a small Python
+//! child process when the listener must be killable) on an ephemeral port, runs the binary
+//! the way a user would, and checks the output and exit code. Tests that kill a process
+//! only ever kill children they started themselves.
+//!
+//! Platform differences are handled with `cfg`: the polite/forced kill steps have
+//! different names on Windows, and a few tests only make sense on one platform.
+
 use std::net::TcpListener;
 use std::process::Command;
 
+/// Run the built `whoisport` binary with `args`.
+///
+/// Returns stdout and stderr joined together, and the exit code (`None` if the process was
+/// ended by a signal).
 fn run(args: &[&str]) -> (String, Option<i32>) {
     let out = Command::new(env!("CARGO_BIN_EXE_whoisport"))
         .args(args)
@@ -12,6 +26,7 @@ fn run(args: &[&str]) -> (String, Option<i32>) {
     )
 }
 
+/// A port with a listener is reported with its owner's pid, and the exit code is 0.
 #[test]
 fn reports_listener_and_exits_zero() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -24,6 +39,7 @@ fn reports_listener_and_exits_zero() {
     );
 }
 
+/// Asking about a port nobody listens on says so and exits 1.
 #[test]
 fn exits_one_when_nothing_listening() {
     let port = {
@@ -35,6 +51,7 @@ fn exits_one_when_nothing_listening() {
     assert!(stdout.contains("nothing listening"), "{stdout}");
 }
 
+/// With no arguments the table lists every listener, including this test's own.
 #[test]
 fn no_args_lists_all_listeners() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -45,6 +62,8 @@ fn no_args_lists_all_listeners() {
     assert!(stdout.lines().any(|l| l.starts_with(&row)), "{stdout}");
 }
 
+/// Several ports at once: found ports are reported, a missing one is named, and the exit
+/// code is 1 because something asked for was not found.
 #[test]
 fn multiple_ports_exit_one_if_any_missing() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -62,18 +81,23 @@ fn multiple_ports_exit_one_if_any_missing() {
     );
 }
 
+/// `--kill` with no port is a usage error (exit 2), so it can never mean "kill everything".
 #[test]
 fn kill_requires_a_port() {
     let (_, code) = run(&["--kill"]);
     assert_eq!(code, Some(2)); // clap usage error; must never mean "kill everything"
 }
 
+/// Name of the polite kill step in output (`exited after <ASK>`), per platform.
 #[cfg(windows)]
 const ASK: &str = "Ctrl+C/close";
+/// Name of the forced kill step in output (`exited after <FORCE>`), per platform.
 #[cfg(windows)]
 const FORCE: &str = "TerminateProcess";
+/// Name of the polite kill step in output (`exited after <ASK>`), per platform.
 #[cfg(not(windows))]
 const ASK: &str = "SIGTERM";
+/// Name of the forced kill step in output (`exited after <FORCE>`), per platform.
 #[cfg(not(windows))]
 const FORCE: &str = "SIGKILL";
 
@@ -104,6 +128,7 @@ fn spawn_listener(stubborn: bool) -> (std::process::Child, String) {
     (child, line.trim().to_string())
 }
 
+/// `--kill` asks the listener to exit and reports success (exit 0).
 #[test]
 fn kill_terminates_listener() {
     // On Linux the child stays a zombie until wait(), so this also covers zombie-as-exited.
@@ -115,6 +140,7 @@ fn kill_terminates_listener() {
     assert!(!status.success());
 }
 
+/// `--kill --force` forces the exit when the process ignores the polite request.
 #[test]
 fn force_escalates_when_polite_request_ignored() {
     let (mut child, port) = spawn_listener(true);
@@ -127,6 +153,7 @@ fn force_escalates_when_polite_request_ignored() {
     );
 }
 
+/// Without `--force`, a process that ignores the polite request is still running: exit 3.
 #[test]
 fn failed_kill_exits_three() {
     let (mut child, port) = spawn_listener(true);
@@ -137,6 +164,7 @@ fn failed_kill_exits_three() {
     assert!(stdout.contains("still running"), "{stdout}");
 }
 
+/// `--json` prints a JSON array with the listener's port and pid.
 #[test]
 fn json_output_lists_listener() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -148,12 +176,14 @@ fn json_output_lists_listener() {
     assert_eq!(v[0]["pid"], std::process::id());
 }
 
+/// `--json` together with `--kill` is rejected as a usage error (exit 2).
 #[test]
 fn json_conflicts_with_kill() {
     let (_, code) = run(&["1", "--json", "--kill"]);
     assert_eq!(code, Some(2));
 }
 
+/// `--udp` finds a bound UDP socket, and the same port is not a TCP listener.
 #[test]
 fn udp_flag_finds_bound_socket() {
     let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -169,6 +199,8 @@ fn udp_flag_finds_bound_socket() {
     assert_eq!(run(&[&port]).1, Some(1));
 }
 
+/// A parent that shares the socket with its child is never signalled; the child is
+/// stopped, and because the parent still holds the port the run exits 3.
 #[cfg(unix)]
 #[test]
 fn kill_spares_parent_that_shares_the_socket() {
@@ -200,6 +232,8 @@ fn kill_spares_parent_that_shares_the_socket() {
     assert!(parent_alive, "{out}");
 }
 
+/// Windows: Ctrl+C reaches every program on a console, so with an unrelated program on the
+/// same console `--kill` refuses (exit 3) and leaves it alone; `--kill --force` then works.
 #[cfg(windows)]
 #[test]
 fn ctrl_c_is_not_sent_to_a_shared_console() {
@@ -253,6 +287,8 @@ fn ctrl_c_is_not_sent_to_a_shared_console() {
     );
 }
 
+/// A command line containing an escape sequence and invalid UTF-8 is shown with the
+/// control characters escaped, and the process is still listed with its real pid.
 #[cfg(unix)]
 #[test]
 fn hostile_argv_is_shown_escaped_not_hidden() {
@@ -285,6 +321,7 @@ fn hostile_argv_is_shown_escaped_not_hidden() {
     );
 }
 
+/// One process listening on two requested ports is signalled exactly once.
 #[test]
 fn process_on_two_requested_ports_is_killed_once() {
     let script = "import socket,time\nss=[socket.socket() for _ in range(2)]\n\
