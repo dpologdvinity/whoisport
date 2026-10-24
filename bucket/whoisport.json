@@ -1,12 +1,12 @@
 {
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Show what is listening on a TCP or UDP port, and optionally kill it",
   "homepage": "https://github.com/dpologdvinity/whoisport",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/dpologdvinity/whoisport/releases/download/v0.5.3/whoisport-v0.5.3-x86_64-pc-windows-msvc.zip",
-      "hash": "9f0c5b93fca64a10c717e3b174d0711b79f1f56e236dd187dfcbe641a988ebfa"
+      "url": "https://github.com/dpologdvinity/whoisport/releases/download/v0.5.4/whoisport-v0.5.4-x86_64-pc-windows-msvc.zip",
+      "hash": "20a0fe1ed1e301a3b36a0cc802019556f407fe904f99739b1cd3dd667343d8c2"
     }
   },
   "bin": "whoisport.exe",
