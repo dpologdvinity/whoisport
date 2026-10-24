@@ -11,7 +11,13 @@ use clap::Parser;
 /// everything"), `--force` always comes with `--kill`, and `--json` never comes with
 /// `--kill`.
 #[derive(Parser)]
-#[command(version, about = "Show what is listening on a TCP or UDP port")]
+// `long_about = None`: clap would otherwise print this struct's rustdoc (written for
+// developers) as the `--help` text.
+#[command(
+    version,
+    about = "Show what is listening on a TCP or UDP port",
+    long_about = None
+)]
 pub struct Args {
     /// Port(s) to inspect; omit to list every listening port
     pub ports: Vec<u16>,
