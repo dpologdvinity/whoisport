@@ -133,14 +133,32 @@ jobs:
         with:
           name: sdist
           path: dist
-  # Final gate: all builds succeeded -> make the release public. (Homebrew and Scoop
-  # each live in their own repository and pick the release up on their own schedule.)
+  # Final gate: all builds succeeded -> add the checksums and installers, then make the
+  # release public. (Homebrew and Scoop each live in their own repository and pick the
+  # release up on their own schedule.)
   publish:
     needs: [build, macos, windows, pypi-wheels, pypi-sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # SHA256SUMS lets install.sh / install.ps1 verify what they download. The installers
+      # are attached to the release too, so `releases/latest/download/install.sh` always
+      # serves the script that belongs to the newest release.
+      - name: Add SHA256SUMS and the installers to the release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir assets
+          gh release download "$TAG" --dir assets -p '*.tar.gz' -p '*.zip' -p '*.deb' -p '*.rpm'
+          (cd assets && sha256sum -- * > ../SHA256SUMS)
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS install.sh install.ps1 --clobber
       - env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
@@ -193,3 +211,43 @@ jobs:
             fi
             (cd "$dir" && npm publish --provenance --access public)
           done
+  # After the release is public: run the PUBLISHED installers, from the URLs users will use,
+  # on each platform. This cannot undo a bad release, but it fails loudly so it is fixed at
+  # once. It checks both an explicit version and the default ("latest") path.
+  installer-smoke:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Install with the shell installer (Linux, macOS)
+        if: runner.os != 'Windows'
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          for arg in "--version $TAG" ""; do
+            rm -rf "${RUNNER_TEMP:?}/bin"
+            # shellcheck disable=SC2086 # $arg is deliberately split into option and value
+            curl -fsSL "https://github.com/$REPO/releases/download/$TAG/install.sh" | sh -s -- $arg --dir "$RUNNER_TEMP/bin"
+            "$RUNNER_TEMP/bin/whoisport" --version | grep -F "${TAG#v}"
+          done
+      - name: Install with the PowerShell installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          WHOISPORT_NO_MODIFY_PATH: "1"
+        run: |
+          foreach ($version in @($env:TAG, '')) {
+            $env:WHOISPORT_VERSION = $version
+            $env:WHOISPORT_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'bin'
+            Remove-Item -Recurse -Force $env:WHOISPORT_INSTALL_DIR -ErrorAction SilentlyContinue
+            irm "https://github.com/$env:REPO/releases/download/$env:TAG/install.ps1" | iex
+            $out = & (Join-Path $env:WHOISPORT_INSTALL_DIR 'whoisport.exe') --version
+            if ($out -notmatch [regex]::Escape($env:TAG.TrimStart('v'))) { throw "wrong version: $out" }
+          }

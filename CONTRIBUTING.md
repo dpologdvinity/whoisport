@@ -32,6 +32,9 @@ CI runs all of these on every pull request; run them yourself before pushing.
 | Spelling | `typos` ([install](https://github.com/crate-ci/typos)) |
 | Workflow files | `actionlint` ([install](https://github.com/rhysd/actionlint)) |
 | Dependency audit | `cargo audit` |
+| npm packaging | `node npm/check.mjs` |
+| Installers (shell) | `shellcheck install.sh tests/install_test.sh && sh tests/install_test.sh` |
+| Installer (Windows) | `cargo build --release`, then `pwsh tests/install_test.ps1 -Exe target/release/whoisport.exe` (also `powershell` 5.1) |
 | Coverage (must stay at or above 90 % of lines) | `cargo llvm-cov --fail-under-lines 90` (needs `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`) |
 
 ### Checking the other operating systems

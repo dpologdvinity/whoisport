@@ -63,12 +63,36 @@ ports marked ? are owned by another user; run with sudo to see it
 
 | Platform | Command |
 |----------|---------|
+| Linux, macOS | `curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh \| sh` |
+| Windows (PowerShell) | `irm https://github.com/dpologdvinity/whoisport/releases/latest/download/install.ps1 \| iex` |
 | Any, with Rust | `cargo binstall whoisport` (prebuilt) or `cargo install whoisport` (builds from source) |
 | Any, with Python | `pipx install whoisport` or `uvx whoisport` |
 | macOS, Linux | `brew install dpologdvinity/tap/whoisport` |
 | Windows | `scoop bucket add whoisport https://github.com/dpologdvinity/scoop-whoisport` then `scoop install whoisport` |
 | Debian, Ubuntu | download the `.deb` from [Releases](https://github.com/dpologdvinity/whoisport/releases), then `sudo apt install ./whoisport_*.deb` |
 | Fedora, RHEL | download the `.rpm` from [Releases](https://github.com/dpologdvinity/whoisport/releases), then `sudo dnf install ./whoisport-*.rpm` |
+
+### The one-line installers
+
+`install.sh` (Linux, macOS) and `install.ps1` (Windows) find the binary for your machine,
+download it, **check its SHA-256 against the release's `SHA256SUMS`**, and only then install
+it. If the check fails, nothing is installed. They need no administrator rights: the
+binary goes to `~/.local/bin` (Linux, macOS) or `%LOCALAPPDATA%\Programs\whoisport`
+(Windows, which is also added to your user `PATH`).
+
+```sh
+# a specific version, or a different directory
+curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh | sh -s -- --version v0.5.7 --dir /usr/local/bin
+```
+
+```powershell
+$env:WHOISPORT_VERSION = 'v0.5.7'; irm https://github.com/dpologdvinity/whoisport/releases/latest/download/install.ps1 | iex
+```
+
+Piping a download into a shell means trusting it, so read the script first if you like
+([`install.sh`](install.sh), [`install.ps1`](install.ps1)); to pin it, use the URL of a
+specific release, `…/releases/download/v0.5.7/install.sh`. To uninstall, delete the
+`whoisport` binary from that directory.
 
 Or download a binary from the [Releases page](https://github.com/dpologdvinity/whoisport/releases):
 Linux (static, x86_64 and aarch64), macOS (Apple silicon and Intel) and Windows (x86_64).
