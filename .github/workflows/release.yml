@@ -3,12 +3,14 @@
 #   create ──► build (Linux musl + .deb/.rpm) ─┐
 #          ├─► macos (Apple silicon, Intel)    ├─► publish ──► pypi-publish
 #          ├─► windows                         │   (release      (PyPI, trusted
-#          └─► pypi-wheels / pypi-sdist ───────┘    goes public,  publishing)
-#                                                   Scoop updated) └─► npm (if enabled)
+#          └─► pypi-wheels / pypi-sdist ───────┘    goes public)   publishing)
+#                                                                └─► npm (if enabled)
 #
 # Nothing is public until every build succeeded: `create` makes a DRAFT release, the build
-# jobs upload to it, and only `publish` makes it public. Homebrew follows on its own (the
-# tap polls releases). crates.io is published manually with `cargo publish`.
+# jobs upload to it, and only `publish` makes it public. Homebrew (homebrew-tap) and Scoop
+# (scoop-whoisport) follow on their own: each repository polls for new releases. They are
+# separate repositories so that `master` here can be protected, which would also block a
+# workflow here from committing to it. crates.io is published manually with `cargo publish`.
 name: Release
 on:
   push:
@@ -17,7 +19,7 @@ permissions:
   contents: read
 jobs:
   # Check the tag, test, and create a DRAFT release once; build jobs only upload to it.
-  # Nothing is public (GitHub release, Scoop, PyPI, npm) until every build has succeeded.
+  # Nothing is public (GitHub release, PyPI, npm) until every build has succeeded.
   create:
     runs-on: ubuntu-latest
     permissions:
@@ -131,42 +133,19 @@ jobs:
         with:
           name: sdist
           path: dist
-  # Final gate: all builds succeeded -> publish the release, then update Scoop.
+  # Final gate: all builds succeeded -> make the release public. (Homebrew and Scoop
+  # each live in their own repository and pick the release up on their own schedule.)
   publish:
     needs: [build, macos, windows, pypi-wheels, pypi-sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh release edit "$TAG" --draft=false
-      # Point the Scoop bucket (bucket/whoisport.json on master) at the new zip,
-      # unless this is a re-run of an older tag (that would downgrade it).
-      - env:
-          TAG: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          [ "$(gh release view --repo "$REPO" --json tagName -q .tagName)" = "$TAG" ] || { echo "$TAG is not the latest release; leaving Scoop alone"; exit 0; }
-          zip="whoisport-$TAG-x86_64-pc-windows-msvc.zip"
-          gh release download "$TAG" --repo "$REPO" -p "$zip"
-          hash=$(sha256sum "$zip" | cut -d' ' -f1)
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for attempt in 1 2 3; do
-            git fetch -q origin master && git checkout -q -B master origin/master
-            jq --arg v "${TAG#v}" --arg u "https://github.com/$REPO/releases/download/$TAG/$zip" --arg h "$hash" \
-              '.version = $v | .architecture."64bit".url = $u | .architecture."64bit".hash = $h' bucket/whoisport.json > m.json
-            mv m.json bucket/whoisport.json
-            git diff --quiet bucket/whoisport.json && { echo "Scoop manifest already current"; exit 0; }
-            git commit -q -am "Update Scoop manifest to $TAG"
-            git push -q origin master && exit 0
-            echo "push raced with another commit (attempt $attempt); retrying"
-          done
-          exit 1
   pypi-publish:
     needs: publish
     runs-on: ubuntu-latest

@@ -240,7 +240,7 @@ create (check tag == Cargo.toml version, run tests, make a DRAFT release)
   ├─► macos (Apple silicon, Intel)
   ├─► windows (zip)
   └─► pypi-wheels / pypi-sdist
-        └─► publish  (release becomes public; Scoop manifest updated)
+        └─► publish  (release becomes public)
               ├─► pypi-publish  (trusted publishing, no token)
               └─► npm           (off unless the NPM_PUBLISH variable is "true")
 ```
@@ -252,7 +252,7 @@ Nothing is public until every build has succeeded. Channels:
 | GitHub Releases (binaries, `.deb`, `.rpm`) | `release.yml` |
 | crates.io | manual `cargo publish` after the tag |
 | PyPI (wheels that contain the binary, built with maturin) | `release.yml`, trusted publishing |
-| Scoop (`bucket/whoisport.json`) | `release.yml` `publish` job commits the new version and hash |
+| Scoop (separate `scoop-whoisport` repository) | its own workflow polls for new releases every 6 hours and updates the manifest from the release's published SHA-256 |
 | Homebrew (separate `homebrew-tap` repository) | its own workflow polls for new releases every 6 hours |
 | `cargo binstall` | reads `[package.metadata.binstall]` in `Cargo.toml`; uses the release assets |
 | winget | manual pull request to `microsoft/winget-pkgs` |

@@ -114,11 +114,13 @@ Please do not commit editor, agent or local-tool files (`.claude/`, `.codex/`,
 2. Tag the merge commit and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin
    vX.Y.Z`. `release.yml` checks the tag matches `Cargo.toml`, runs the tests, builds
    every platform into a *draft* release, and only when all builds succeeded publishes it
-   and PyPI, and updates the Scoop manifest.
+   and PyPI.
 3. Publish the crate: `cargo publish` (then `cargo clean -p whoisport`, so a later build
    does not reuse the packaged copy).
-4. Homebrew updates itself within six hours (the tap polls releases). winget needs a pull
-   request to `microsoft/winget-pkgs`.
+4. Homebrew (`homebrew-tap`) and Scoop (`scoop-whoisport`) update themselves within six
+   hours: each lives in its own repository and polls for new releases. (They are separate
+   so that `master` here can be protected: a workflow cannot commit to a protected
+   branch.) winget needs a pull request to `microsoft/winget-pkgs`.
 
 ## Reporting a security problem
 
