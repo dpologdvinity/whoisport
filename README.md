@@ -5,7 +5,7 @@
 
 Find out what is listening on a TCP or UDP port, and optionally kill it.
 
-![whoisport demo](demo.gif)
+![whoisport demo](https://raw.githubusercontent.com/dpologdvinity/whoisport/master/demo.gif)
 
 ```console
 $ whoisport 3000
@@ -39,7 +39,6 @@ been running, which is usually what you need to decide whether to kill it.
 cargo binstall whoisport   # prebuilt binary, no compiling
 cargo install whoisport    # build from source
 pipx install whoisport     # or: uvx whoisport, pip install whoisport
-npm install -g whoisport   # or: pnpm add -g, yarn global add, bun add -g, npx whoisport
 ```
 
 macOS or Linux, with [Homebrew](https://brew.sh):
