@@ -51,7 +51,7 @@ ports marked ? are owned by another user; run with sudo to see it
 | Any, with Rust | `cargo binstall whoisport` (prebuilt) or `cargo install whoisport` (builds from source) |
 | Any, with Python | `pipx install whoisport` or `uvx whoisport` |
 | macOS, Linux | `brew install dpologdvinity/tap/whoisport` |
-| Windows | `scoop bucket add whoisport https://github.com/dpologdvinity/whoisport` then `scoop install whoisport` |
+| Windows | `scoop bucket add whoisport https://github.com/dpologdvinity/scoop-whoisport` then `scoop install whoisport` |
 | Debian, Ubuntu | download the `.deb` from [Releases](https://github.com/dpologdvinity/whoisport/releases), then `sudo apt install ./whoisport_*.deb` |
 | Fedora, RHEL | download the `.rpm` from [Releases](https://github.com/dpologdvinity/whoisport/releases), then `sudo dnf install ./whoisport-*.rpm` |
 

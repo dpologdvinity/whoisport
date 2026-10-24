@@ -13,7 +13,7 @@ authors = ["Kaitlyn Bassford"]
 keywords = ["port", "process", "cli", "lsof", "devtools"]
 categories = ["command-line-utilities", "development-tools"]
 # Not needed to build the crate: the demo, other packagers' files, and CI config.
-exclude = ["demo.gif", "demo.tape", ".github", "bucket", "pyproject.toml", "npm"]
+exclude = ["demo.gif", "demo.tape", ".github", "pyproject.toml", "npm"]
 
 # Dependencies are kept minimal. Platform-specific ones are under [target.*] below.
 [dependencies]
