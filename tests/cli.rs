@@ -355,3 +355,22 @@ fn process_on_two_requested_ports_is_killed_once() {
     assert_eq!(out.matches("exited after").count(), 1, "{out}");
     assert!(!out.contains("failed"), "{out}");
 }
+
+/// `--help` shows the user-facing description and flags, not the developer notes from the
+/// source's doc comments (clap would print those if it were allowed to).
+#[test]
+fn help_describes_the_tool_for_users() {
+    let (out, code) = run(&["--help"]);
+    assert_eq!(code, Some(0), "{out}");
+    assert!(
+        out.contains("Show what is listening on a TCP or UDP port"),
+        "{out}"
+    );
+    for flag in ["--kill", "--force", "--json", "--udp"] {
+        assert!(out.contains(flag), "{flag} missing from --help: {out}");
+    }
+    assert!(
+        !out.contains("clap enforces"),
+        "developer notes leaked into --help: {out}"
+    );
+}
