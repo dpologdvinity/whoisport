@@ -84,19 +84,13 @@ fn main() -> ExitCode {
 
 /// Scan for listeners and report them (or kill them). Returns the process exit code.
 fn run(args: &Args) -> u8 {
-    let mut seen = std::collections::HashSet::new();
-    let unique_ports: Vec<u16> = args
-        .ports
-        .iter()
-        .copied()
-        .filter(|p| seen.insert(*p))
-        .collect();
-    let scan = Scan::new(&unique_ports, args.udp);
+    let ports = args.unique_ports();
+    let scan = Scan::new(&ports, args.udp);
     if args.json {
         output::print_json(&scan.rows, args.proto());
         return scan.exit_code();
     }
-    if unique_ports.is_empty() {
+    if ports.is_empty() {
         if scan.rows.is_empty() {
             println!("nothing listening");
             return 1;
@@ -104,12 +98,13 @@ fn run(args: &Args) -> u8 {
         output::print_table(&scan.rows, args.udp);
         return 0;
     }
-    report_ports(&unique_ports, args, &scan)
+    report_ports(&ports, args, &scan)
 }
 
 /// Detail mode: print every requested port, and with `--kill` stop what holds it.
 ///
-/// Returns the exit code: [`Scan::exit_code`], raised to `3` if any kill failed.
+/// `ports` are the requested ports without repeats. Returns the exit code:
+/// [`Scan::exit_code`], raised to `3` if any kill failed.
 fn report_ports(ports: &[u16], args: &Args, scan: &Scan) -> u8 {
     let mut code = scan.exit_code();
     // Pids already handled, so a process holding several requested ports is stopped once.

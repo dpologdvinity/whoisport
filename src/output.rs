@@ -262,6 +262,22 @@ mod tests {
     }
 
     #[test]
+    fn table_shows_a_known_pid_even_when_its_details_are_unreadable() {
+        let mut row = hidden(22, None);
+        row.pid = Some(99); // the process exited between the scan and reading its details
+        let table = format_table(&[row], false);
+        assert!(table.contains("22     99       ?          ?"), "{table}");
+    }
+
+    #[test]
+    fn bidi_and_invisible_characters_are_escaped_too() {
+        // U+202E reverses the text that follows it: "exe.txt" can pose as "txt.exe".
+        assert_eq!(shown("a\u{202e}b"), "a\\u{202e}b");
+        assert_eq!(shown("zero\u{200b}width"), "zero\\u{200b}width");
+        assert_eq!(shown("\u{feff}bom"), "\\u{feff}bom");
+    }
+
+    #[test]
     fn table_names_the_container_for_a_hidden_docker_row() {
         let c = Container {
             name: "web".into(),

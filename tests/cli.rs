@@ -10,24 +10,21 @@
 
 use std::net::TcpListener;
 use std::process::Command;
-use std::sync::atomic::{AtomicU16, Ordering};
 
-/// A port with nothing listening on it, for tests that need "nobody is here".
+/// A port that nothing listens on, for tests that need "nobody is here".
 ///
-/// Probes a port in the range 20000..25000, outside the ephemeral port range used
-/// by any platform (Linux uses 32768+, Windows uses 49152+). A shared atomic counter
-/// ensures parallel tests do not select conflicting ports.
-fn unused_port() -> String {
-    static NEXT: AtomicU16 = AtomicU16::new(0);
-    loop {
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let port = 20_000 + (std::process::id() as u16 % 5_000) + n % 5_000;
-        if let Ok(l) = TcpListener::bind(("127.0.0.1", port)) {
-            drop(l);
-            return port.to_string();
-        }
-    }
-}
+/// Port 1 (`tcpmux`) is assigned to nothing in practice and is privileged, so ordinary
+/// users, and therefore every other test running in parallel, cannot bind it. A constant
+/// is deliberate: the obvious alternatives were all flaky or unbounded in practice.
+///
+/// * Binding a probe listener on a free port and dropping it races with the other tests:
+///   spawning a child process briefly duplicates every open socket into it (until `exec`),
+///   so a probe could still be "held" by a child for a few milliseconds after the drop,
+///   and `whoisport` rightly reports that child as a listener.
+/// * Probing with `connect` needs a refusal to mean "free", but some environments (WSL2
+///   with certain firewall settings) silently drop packets to closed localhost ports, so
+///   it never answers and the search never ends.
+const NOBODY_LISTENS: &str = "1";
 
 /// Run the built `whoisport` binary with `args`.
 ///
@@ -60,8 +57,8 @@ fn reports_listener_and_exits_zero() {
 /// Asking about a port nobody listens on says so and exits 1.
 #[test]
 fn exits_one_when_nothing_listening() {
-    let port = unused_port();
-    let (stdout, code) = run(&[&port]);
+    let port = NOBODY_LISTENS;
+    let (stdout, code) = run(&[port]);
     assert_eq!(code, Some(1), "port {port}: {stdout}");
     assert!(stdout.contains("nothing listening"), "{stdout}");
 }
@@ -83,8 +80,8 @@ fn no_args_lists_all_listeners() {
 fn multiple_ports_exit_one_if_any_missing() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let live = l.local_addr().unwrap().port().to_string();
-    let dead = unused_port();
-    let (stdout, code) = run(&[&live, &dead]);
+    let dead = NOBODY_LISTENS;
+    let (stdout, code) = run(&[&live, dead]);
     assert_eq!(code, Some(1), "live {live}, dead {dead}: {stdout}");
     assert!(stdout.contains(&format!("port    {live}")), "{stdout}");
     assert!(

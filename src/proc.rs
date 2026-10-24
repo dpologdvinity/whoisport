@@ -117,13 +117,21 @@ pub fn parse_stat(stat: &str) -> Option<(u32, u64)> {
     Some((rest.get(1)?.parse().ok()?, rest.get(19)?.parse().ok()?))
 }
 
-/// The user name for a numeric id, from NSS or `/etc/passwd`; the number itself if not
-/// found (for example unknown users).
+/// Look up the user name for a numeric id, uncached.
+///
+/// Asks the C library (`getpwuid_r`), which on glibc consults NSS and so also finds LDAP or
+/// network users; on musl it reads `/etc/passwd`. If that fails, `/etc/passwd` is read
+/// directly, and as a last resort the number itself is returned (a process of a user that
+/// no longer exists).
 fn lookup_user_name(uid: u32) -> String {
     let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
     let mut result = std::ptr::null_mut();
+    // `getpwuid_r` stores the name's text in this caller-provided buffer; it answers
+    // `ERANGE` when the buffer is too small, so it is grown (up to 64 KiB) and retried.
     let mut buf = vec![0u8; 1024];
     loop {
+        // SAFETY: `pwd` and `result` are valid for writes, `buf` is valid for `buf.len()`
+        // bytes, and the thread-safe `_r` variant is used.
         let ret = unsafe {
             libc::getpwuid_r(
                 uid,
@@ -135,8 +143,11 @@ fn lookup_user_name(uid: u32) -> String {
         };
         if ret == 0 {
             if !result.is_null() {
+                // SAFETY: on success `result` points at `pwd`, which getpwuid_r filled in.
                 let name_ptr = unsafe { (*result).pw_name };
                 if !name_ptr.is_null() {
+                    // SAFETY: `pw_name` is a NUL-terminated string stored in `buf`, which
+                    // is still alive here.
                     let cstr = unsafe { std::ffi::CStr::from_ptr(name_ptr) };
                     return cstr.to_string_lossy().into_owned();
                 }
@@ -159,7 +170,8 @@ fn lookup_user_name(uid: u32) -> String {
         .unwrap_or_else(|| uid.to_string())
 }
 
-/// The user name for a numeric id, cached in memory.
+/// The user name for a numeric id, remembered for the rest of the run (a listing often
+/// shows the same few users many times, and a lookup can be slow with network accounts).
 fn user_name(uid: u32) -> String {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<HashMap<u32, String>>> = Mutex::new(None);
@@ -234,6 +246,14 @@ mod tests {
    1: 0100007F:0BB8 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1000        0 67890 1 0 100 0 0 10 0
    2: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 11111 1 0 100 0 0 10 0
 ";
+
+    #[test]
+    fn user_names_come_from_the_system_or_fall_back_to_the_number() {
+        assert_eq!(lookup_user_name(0), "root");
+        assert_eq!(user_name(0), "root"); // and again, from the cache
+        // An id no account has: the number itself, so nothing is ever shown blank.
+        assert_eq!(lookup_user_name(4_000_000_001), "4000000001");
+    }
 
     #[test]
     fn listen_sockets_keeps_only_listen_state() {

@@ -35,3 +35,25 @@ pub fn ask_exit(pid: u32) -> io::Result<()> {
 pub fn terminate(pid: u32) -> io::Result<()> {
     signal(pid, libc::SIGKILL)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `kill(0, ..)` signals the caller's whole process group and a negative pid signals
+    /// another group, so pids that would become 0 or negative as an `i32` must be refused.
+    /// Signal 0 is used: it delivers nothing, so even if the guard regressed this test
+    /// could not harm anything (it would fail instead).
+    #[test]
+    fn pids_that_would_address_a_process_group_are_refused() {
+        for pid in [0, i32::MAX as u32 + 1, u32::MAX] {
+            let err = signal(pid, 0).unwrap_err();
+            assert_eq!(err.raw_os_error(), Some(libc::EINVAL), "pid {pid}");
+        }
+    }
+
+    #[test]
+    fn a_real_pid_can_be_probed() {
+        assert!(signal(std::process::id(), 0).is_ok());
+    }
+}
