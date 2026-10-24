@@ -79,6 +79,8 @@ jobs:
         run: typos
       - name: Workflow files
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: npm launcher and build script agree on package names
+        run: node npm/check.mjs
 
   # 2. Known vulnerabilities in dependencies (RustSec advisory database). Independent of
   #    the other jobs, so it runs in parallel.

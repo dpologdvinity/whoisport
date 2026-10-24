@@ -4,7 +4,7 @@
  * whoisport launcher.
  *
  * The `whoisport` npm package contains no binary of its own. Each platform's binary lives
- * in its own package (`whoisport-linux-x64`, `whoisport-win32-x64`, ...), listed as an
+ * in its own package (`whoisport-linux-x64`, `whoisport-windows-x64`, ...), listed as an
  * optional dependency with `os`/`cpu` set, so npm, pnpm, yarn and bun install only the one
  * that matches this machine. This script finds that package, runs its binary with the same
  * arguments, and passes the exit code (or terminating signal) straight through.
@@ -17,7 +17,7 @@ const packages = {
   "linux arm64": "whoisport-linux-arm64",
   "darwin x64": "whoisport-darwin-x64",
   "darwin arm64": "whoisport-darwin-arm64",
-  "win32 x64": "whoisport-win32-x64",
+  "win32 x64": "whoisport-windows-x64", // Node calls Windows "win32"; the package is named "windows"
 };
 
 /** Print `message` to stderr and exit with failure. */
