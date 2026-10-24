@@ -1,8 +1,23 @@
 # whoisport
 
-[![crates.io](https://img.shields.io/crates/v/whoisport.svg)](https://crates.io/crates/whoisport)
+<!-- Where to get it -->
 [![CI](https://github.com/dpologdvinity/whoisport/actions/workflows/ci.yml/badge.svg)](https://github.com/dpologdvinity/whoisport/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/dpologdvinity/whoisport.svg)](https://github.com/dpologdvinity/whoisport/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/whoisport.svg)](https://crates.io/crates/whoisport)
+[![PyPI](https://img.shields.io/pypi/v/whoisport.svg)](https://pypi.org/project/whoisport/)
+[![npm](https://img.shields.io/npm/v/whoisport.svg)](https://www.npmjs.com/package/whoisport)
+[![Homebrew](https://img.shields.io/badge/homebrew-dpologdvinity%2Ftap-FBB040.svg)](#install)
+
+<!-- What it is -->
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational.svg)](#install)
+[![MSRV](https://img.shields.io/crates/msrv/whoisport.svg)](Cargo.toml)
+[![License: MIT](https://img.shields.io/github/license/dpologdvinity/whoisport.svg)](LICENSE)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-FE5196.svg)](https://www.conventionalcommits.org/)
+
+<!-- How it is doing -->
+[![crates.io downloads](https://img.shields.io/crates/d/whoisport.svg)](https://crates.io/crates/whoisport)
+[![GitHub downloads](https://img.shields.io/github/downloads/dpologdvinity/whoisport/total.svg)](https://github.com/dpologdvinity/whoisport/releases)
+[![Last commit](https://img.shields.io/github/last-commit/dpologdvinity/whoisport.svg)](https://github.com/dpologdvinity/whoisport/commits/master)
 
 **Find out what is listening on a port, who started it, and stop it safely.**
 Works on Linux, macOS and Windows. One small binary, no runtime dependencies.
