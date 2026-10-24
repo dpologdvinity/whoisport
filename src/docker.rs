@@ -22,7 +22,7 @@ pub struct Container {
 /// How long a `docker` call may take. A stuck daemon (Docker Desktop right after wake,
 /// a dead remote) would otherwise hang whoisport, the tool people reach for when
 /// something is stuck.
-const DOCKER_TIMEOUT: Duration = Duration::from_millis(1000);
+const DOCKER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Run `program args...` and return its stdout, or `None` if it cannot start, exits
 /// non-zero, or is still running after `timeout` (in which case it is killed).
@@ -82,43 +82,10 @@ pub fn is_local_endpoint(host: &str) -> bool {
         || matches!(tcp_host, Some("localhost" | "127.0.0.1" | "[::1]"))
 }
 
-/// Check if a local Docker daemon socket or named pipe exists on the filesystem.
-fn local_docker_socket_exists() -> bool {
-    #[cfg(unix)]
-    {
-        if std::path::Path::new("/var/run/docker.sock").exists() {
-            return true;
-        }
-        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR")
-            && std::path::Path::new(&runtime_dir)
-                .join("docker.sock")
-                .exists()
-        {
-            return true;
-        }
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = std::path::Path::new(&home);
-            if home_path.join(".docker/run/docker.sock").exists()
-                || home_path.join(".docker/desktop/docker.sock").exists()
-            {
-                return true;
-            }
-        }
-        false
-    }
-    #[cfg(windows)]
-    {
-        std::path::Path::new(r"\\.\pipe\docker_engine").exists()
-    }
-}
-
 /// The endpoint `docker` would talk to: $DOCKER_HOST, else the current context's.
 fn endpoint() -> Option<String> {
     if let Ok(host) = std::env::var("DOCKER_HOST") {
         return Some(host);
-    }
-    if !local_docker_socket_exists() {
-        return None;
     }
     let out = docker(&[
         "context",
