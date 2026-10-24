@@ -1,469 +1,124 @@
+//! `whoisport`: show what is listening on a TCP or UDP port, and optionally stop it.
+//!
+//! Run with no arguments to list every listener, with ports to see details of the
+//! processes behind them, and with `--kill` to ask those processes to exit.
+//!
+//! # Layout
+//!
+//! | Module | Responsibility |
+//! |--------|----------------|
+//! | [`cli`] | The command-line arguments |
+//! | [`scan`] | Find listeners and gather what is known about each |
+//! | `proc` | The operating-system backend (one of three files, chosen at compile time) |
+//! | [`docker`] | Name the Docker container behind a published port |
+//! | [`output`] | Format results as a table, detail blocks, or JSON |
+//! | [`kill`] | Stop the processes safely |
+//!
+//! See `ARCHITECTURE.md` for how data flows between them.
+//!
+//! # Exit codes
+//!
+//! `0` success; `1` nothing is listening on a requested port (or on any port); `2` invalid
+//! arguments (clap); `3` a kill failed or a holder was deliberately not killed.
+
+// Every item, including private ones, must be documented (enforced in CI via clippy).
+#![warn(clippy::missing_docs_in_private_items)]
+
+mod cli;
+mod docker;
+mod kill;
+mod output;
+mod scan;
+
+// Exactly one `proc` backend is compiled in, each exposing the same functions:
+// `listeners`, `info`, `alive`, `ask_exit`, `terminate` and the `GRACEFUL`/`FORCEFUL` names.
 #[cfg(target_os = "linux")]
-mod proc;
-#[cfg(windows)]
-#[path = "proc_windows.rs"]
 mod proc;
 #[cfg(target_os = "macos")]
 #[path = "proc_macos.rs"]
 mod proc;
+#[cfg(windows)]
+#[path = "proc_windows.rs"]
+mod proc;
+
+// Shared helpers: process details via `sysinfo` (Windows, macOS) and signals (Linux, macOS).
 #[cfg(any(windows, target_os = "macos"))]
 mod sysinfo_info;
 #[cfg(unix)]
 mod unix_kill;
 
-mod docker;
-
 use clap::Parser;
-use serde_json::json;
+use cli::Args;
+use scan::Scan;
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
 
+/// What is known about one running process. Filled in by the `proc` backend.
 pub struct Info {
+    /// Process id.
     pub pid: u32,
+    /// Parent process id (0 when unknown).
     pub ppid: u32,
+    /// Name of the user running the process (or a numeric id if the name is unknown).
     pub user: String,
+    /// Full command line, arguments joined by spaces.
     pub cmd: String,
+    /// Working directory, or `?` when it cannot be read.
     pub cwd: String,
+    /// Seconds since the process started.
     pub uptime_secs: u64,
-    /// Process start time (platform units). With the pid it identifies one process,
-    /// so a pid that is reused after the target exits is never mistaken for it.
+    /// Process start time, in platform units (Linux: clock ticks since boot; elsewhere:
+    /// seconds since the epoch). Together with the pid it identifies one process, so a pid
+    /// that is reused after the target exits is never mistaken for it.
     pub started: u64,
 }
 
-/// Is `pid` still the process that started at `started`?
-fn same_process(pid: u32, started: u64) -> bool {
-    proc::alive(pid) && proc::info(pid).is_some_and(|i| i.started == started)
-}
-
-#[derive(Parser)]
-#[command(version, about = "Show what is listening on a TCP or UDP port")]
-struct Args {
-    /// Port(s) to inspect; omit to list every listening port
-    ports: Vec<u16>,
-    /// Ask the listener(s) on the given port(s) to exit and wait up to 3s
-    #[arg(long, requires = "ports")]
-    kill: bool,
-    /// With --kill: forcibly terminate if asking did not work
-    #[arg(long, requires = "kill")]
-    force: bool,
-    /// Print results as a JSON array
-    #[arg(long, conflicts_with = "kill")]
-    json: bool,
-    /// Look at UDP instead of TCP (bound sockets with no remote peer; on Windows, every bound socket)
-    #[arg(long)]
-    udp: bool,
-}
-
-/// (container name, image) of the container publishing a host port.
-type Container = (String, String);
-
-const HIDDEN: &str = "owned by another user; run with sudo to see it";
-
-fn fmt_duration(s: u64) -> String {
-    match s {
-        0..=59 => format!("{s}s"),
-        60..=3599 => format!("{}m {}s", s / 60, s % 60),
-        3600..=86399 => format!("{}h {}m", s / 3600, s % 3600 / 60),
-        _ => format!("{}d {}h", s / 86400, s % 86400 / 3600),
-    }
-}
-
-/// Text from other processes (argv, paths) can contain escape sequences that would
-/// rewrite the terminal; show control characters escaped instead.
-fn shown(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c.is_control() {
-            true => c.escape_default().collect::<Vec<_>>(),
-            false => vec![c],
-        })
-        .collect()
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    s.chars().take(max - 1).chain(['…']).collect()
-}
-
-fn wait_exit(pid: u32, started: u64) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline {
-        if !same_process(pid, started) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    !same_process(pid, started)
-}
-
-type KillStep = fn(u32) -> std::io::Result<()>;
-
-/// Ask the process to exit; with `force`, escalate if that fails or is ignored.
-fn kill(pid: u32, started: u64, force: bool) -> bool {
-    kill_with(
-        &[
-            (proc::ask_exit, proc::GRACEFUL),
-            (proc::terminate, proc::FORCEFUL),
-        ],
-        pid,
-        started,
-        force,
-    )
-}
-
-/// `steps` run in order: the first asks politely, the second forces. A step that
-/// errors (Windows refuses Ctrl+C on a shared console, a signal is denied) counts as
-/// not having worked, so `--force` still moves on to the next step.
-fn kill_with(steps: &[(KillStep, &str)], pid: u32, started: u64, force: bool) -> bool {
-    let mut asked = false;
-    for (step, name) in steps.iter().take(if force { steps.len() } else { 1 }) {
-        // Re-check right before each signal: the pid may have been reused meanwhile.
-        if !same_process(pid, started) {
-            println!("pid {pid}: already exited");
-            return true;
-        }
-        match step(pid) {
-            Err(e) => eprintln!("pid {pid}: {name} failed: {e}"),
-            Ok(()) => {
-                asked = true;
-                if wait_exit(pid, started) {
-                    println!("pid {pid}: exited after {name}");
-                    return true;
-                }
-            }
-        }
-    }
-    // A step that errored already explained itself; only a step that ran and was
-    // ignored leaves the process "still running".
-    if asked && force {
-        eprintln!("pid {pid}: still running");
-    } else if asked {
-        eprintln!(
-            "pid {pid}: still running (use --force for {})",
-            proc::FORCEFUL
-        );
-    }
-    false
-}
-
-/// Is this the system or user service manager? It can hold a socket it activates.
-fn is_service_manager(pid: u32, cmd: &str) -> bool {
-    let exe = cmd.split_whitespace().next().unwrap_or("");
-    let name = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
-    // svchost.exe and services.exe host many Windows services (RPC on 135, DNS, ...).
-    let name = name.to_ascii_lowercase();
-    pid == 1
-        || matches!(
-            name.as_str(),
-            "systemd" | "launchd" | "svchost.exe" | "services.exe"
-        )
-}
-
-/// Is `ancestor` somewhere up `pid`'s parent chain?
-fn is_ancestor(ancestor: u32, mut pid: u32) -> bool {
-    for _ in 0..64 {
-        match proc::info(pid).map(|i| i.ppid) {
-            Some(parent) if parent == ancestor => return true,
-            Some(parent) if parent > 1 && parent != pid => pid = parent,
-            _ => return false,
-        }
-    }
-    false
-}
-
-/// Why a holder of the socket must not be signalled. Several processes can hold one
-/// listening socket when a supervisor or socket-activating service manager hands it to
-/// the real server; signalling the supervisor can take down far more than the server.
-fn skip_reason(i: &Info, holders: &[u32]) -> Option<String> {
-    if is_service_manager(i.pid, &i.cmd) {
-        return Some("it is a service manager".into());
-    }
-    let child = holders
-        .iter()
-        .find(|&&other| other != i.pid && is_ancestor(i.pid, other))?;
-    Some(format!(
-        "it is a parent of pid {child}, which also holds this port"
-    ))
-}
-
-fn to_json(
-    port: u16,
-    proto: &str,
-    pid: Option<u32>,
-    info: &Option<Info>,
-    c: Option<&Container>,
-) -> serde_json::Value {
-    let (container, image) = c.map_or((None, None), |(n, i)| (Some(n), Some(i)));
-    match info {
-        Some(i) => json!({
-            "port": port, "proto": proto, "pid": i.pid, "ppid": i.ppid, "user": i.user,
-            "cmd": i.cmd, "cwd": i.cwd, "uptime_secs": i.uptime_secs,
-            "container": container, "image": image,
-        }),
-        None => json!({
-            "port": port, "proto": proto, "pid": pid, "ppid": null, "user": null,
-            "cmd": null, "cwd": null, "uptime_secs": null,
-            "container": container, "image": image,
-        }),
-    }
-}
-
+/// Program entry point: parse the arguments, run, and turn the result into an exit code.
 fn main() -> ExitCode {
+    // On Windows the program sometimes re-runs itself as a tiny helper (see
+    // `proc_windows::ask_exit`); if so, do that job and exit instead of the normal flow.
     #[cfg(windows)]
     proc::run_helper_if_requested();
 
-    let args = Args::parse();
-    let proto = if args.udp { "udp" } else { "tcp" };
-    let label = |port: u16| match args.udp {
-        true => format!("{port}/udp"),
-        false => port.to_string(),
-    };
-    let all = proc::listeners(args.udp);
-    let rows: Vec<(u16, Option<u32>, Option<Info>)> = all
-        .into_iter()
-        .filter(|(port, _)| args.ports.is_empty() || args.ports.contains(port))
-        .map(|(port, pid)| (port, pid, pid.and_then(proc::info)))
-        .collect();
-    let missing: Vec<u16> = args
-        .ports
-        .iter()
-        .copied()
-        .filter(|p| !rows.iter().any(|r| r.0 == *p))
-        .collect();
-    // Docker's port forwarder usually runs as root, so a hidden owner may be docker too.
-    // Only ask docker when some listener could be its forwarder.
-    let maybe_docker =
-        |info: &Option<Info>| info.as_ref().is_none_or(|i| docker::is_docker(&i.cmd));
-    let published = match rows.iter().any(|r| maybe_docker(&r.2)) {
-        true => docker::published(args.udp),
-        false => Vec::new(),
-    };
-    let container = |port: u16, info: &Option<Info>| -> Option<Container> {
-        if !maybe_docker(info) {
-            return None;
-        }
-        let (_, name, image) = published.iter().find(|(p, _, _)| *p == port)?;
-        Some((name.clone(), image.clone()))
-    };
-    let mut code = if rows.is_empty() || !missing.is_empty() {
-        1
-    } else {
-        0
-    };
+    ExitCode::from(run(&Args::parse()))
+}
 
+/// Scan for listeners and report them (or kill them). Returns the process exit code.
+fn run(args: &Args) -> u8 {
+    let scan = Scan::new(&args.ports, args.udp);
     if args.json {
-        let out: Vec<_> = rows
-            .iter()
-            .map(|(port, pid, i)| to_json(*port, proto, *pid, i, container(*port, i).as_ref()))
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        return ExitCode::from(code);
+        output::print_json(&scan.rows, args.proto());
+        return scan.exit_code();
     }
-
     if args.ports.is_empty() {
-        if rows.is_empty() {
+        if scan.rows.is_empty() {
             println!("nothing listening");
-            return ExitCode::from(1);
+            return 1;
         }
-        let w = if args.udp { 10 } else { 6 };
-        println!("{:<w$} {:<8} {:<10} CMD", "PORT", "PID", "USER");
-        for (port, _, info) in &rows {
-            let port_label = label(*port);
-            match info {
-                Some(i) => {
-                    let cmd = match container(*port, info) {
-                        Some((name, image)) => format!("docker: {name} ({image})"),
-                        None => i.cmd.clone(),
-                    };
-                    println!(
-                        "{port_label:<w$} {:<8} {:<10} {}",
-                        i.pid,
-                        truncate(&shown(&i.user), 10),
-                        truncate(&shown(&cmd), 80)
-                    )
-                }
-                None => {
-                    let cmd = container(*port, info).map_or("?".into(), |(name, image)| {
-                        format!("docker: {name} ({image})")
-                    });
-                    println!("{port_label:<w$} {:<8} {:<10} {}", "?", "?", shown(&cmd))
-                }
-            }
-        }
-        if rows.iter().any(|r| r.2.is_none()) {
-            eprintln!("ports marked ? are {HIDDEN}");
-        }
-        return ExitCode::from(0);
+        output::print_table(&scan.rows, args.udp);
+        return 0;
     }
+    report_ports(args, &scan)
+}
 
+/// Detail mode: print every requested port, and with `--kill` stop what holds it.
+///
+/// Returns the exit code: [`Scan::exit_code`], raised to `3` if any kill failed.
+fn report_ports(args: &Args, scan: &Scan) -> u8 {
+    let mut code = scan.exit_code();
+    // Pids already handled, so a process holding several requested ports is stopped once.
     let mut killed = Vec::new();
-    for port in &args.ports {
-        if missing.contains(port) {
-            println!("nothing listening on :{}\n", label(*port));
+    for &port in &args.ports {
+        let label = output::port_label(port, args.udp);
+        if scan.missing.contains(&port) {
+            println!("nothing listening on :{label}\n");
         }
-        let holders: Vec<u32> = rows
-            .iter()
-            .filter(|r| r.0 == *port)
-            .filter_map(|r| r.2.as_ref().map(|i| i.pid))
-            .collect();
-        let mut skipped: Vec<u32> = Vec::new();
-        for (_, pid, info) in rows.iter().filter(|r| r.0 == *port) {
-            let docker_line = container(*port, info).map_or(String::new(), |(n, img)| {
-                format!("docker  {} ({})\n", shown(&n), shown(&img))
-            });
-            // Killing docker-proxy only breaks the port mapping; the container keeps running.
-            if let (true, Some((name, _))) = (args.kill, container(*port, info)) {
-                let name = shown(&name);
-                eprintln!(
-                    "port {}: published by container {name}; to stop it, run: docker stop {name}",
-                    label(*port)
-                );
-            }
-            let Some(i) = info else {
-                let why = match pid {
-                    Some(p) => format!("{p} (details unavailable; it may have just exited)"),
-                    None => format!("? ({HIDDEN})"),
-                };
-                println!("port    {}\npid     {why}\n{docker_line}", label(*port));
-                if args.kill {
-                    eprintln!(
-                        "port {}: not killed: its owner could not be inspected",
-                        label(*port)
-                    );
-                    code = 3;
-                }
-                continue;
-            };
-            println!(
-                "port    {}\npid     {}\nparent  {}\nuser    {}\ncmd     {}\n{docker_line}cwd     {}\nuptime  {}\n",
-                label(*port),
-                i.pid,
-                i.ppid,
-                shown(&i.user),
-                shown(&i.cmd),
-                shown(&i.cwd),
-                fmt_duration(i.uptime_secs)
-            );
-            if !args.kill {
-                continue;
-            }
-            if let Some(reason) = skip_reason(i, &holders) {
-                eprintln!("pid {}: not killed: {reason}", i.pid);
-                skipped.push(i.pid);
-                continue;
-            }
-            if !killed.contains(&i.pid) {
-                killed.push(i.pid); // one process can hold several requested ports
-                if !kill(i.pid, i.started, args.force) {
-                    code = 3;
-                }
-            }
+        let rows = scan.rows_for(port);
+        for row in &rows {
+            output::print_details(row, args.udp);
         }
-        // A skipped holder (a supervisor, say) may respawn what was killed or keep the
-        // socket open itself, so the port is not known to be free.
-        if args.kill && !skipped.is_empty() {
-            let pids: Vec<String> = skipped.iter().map(u32::to_string).collect();
-            eprintln!(
-                "port {}: still held by pid {}, which was not killed",
-                label(*port),
-                pids.join(", ")
-            );
+        if args.kill && !kill::kill_port(&rows, &label, args.force, &mut killed) {
             code = 3;
         }
     }
-    ExitCode::from(code)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn service_managers_are_recognised() {
-        assert!(is_service_manager(1, "/sbin/init"));
-        assert!(is_service_manager(812, "/usr/lib/systemd/systemd --user"));
-        assert!(is_service_manager(90, "/sbin/launchd"));
-        assert!(is_service_manager(
-            1652,
-            r"C:\Windows\System32\svchost.exe -k RPCSS"
-        ));
-        assert!(!is_service_manager(4242, "python3 -m http.server 3000"));
-        assert!(!is_service_manager(
-            4243,
-            "/usr/lib/systemd/systemd-resolved"
-        ));
-    }
-
-    #[test]
-    fn control_characters_are_escaped() {
-        assert_eq!(
-            shown("ok \u{1b}]52;c;aGk=\u{7}x"),
-            "ok \\u{1b}]52;c;aGk=\\u{7}x"
-        );
-        assert_eq!(shown("héllo wörld"), "héllo wörld");
-    }
-
-    #[cfg(unix)]
-    mod kill_steps {
-        use super::*;
-        use std::process::{Child, Command, Stdio};
-
-        fn failing_ask(_: u32) -> std::io::Result<()> {
-            Err(std::io::Error::other("refused"))
-        }
-        fn ignored_ask(_: u32) -> std::io::Result<()> {
-            Ok(()) // "succeeds" but the process keeps running, like an ignored SIGTERM
-        }
-        fn sleeper() -> (Child, u64) {
-            let child = Command::new("sleep")
-                .arg("60")
-                .stdout(Stdio::null())
-                .spawn()
-                .unwrap();
-            let started = proc::info(child.id()).unwrap().started;
-            (child, started)
-        }
-        fn reap(mut c: Child) {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-
-        #[test]
-        fn force_runs_the_forced_step_after_the_polite_one_errors() {
-            let (child, started) = sleeper();
-            let id = child.id();
-            let steps: [(KillStep, &str); 2] = [(failing_ask, "ASK"), (proc::terminate, "FORCE")];
-            assert!(kill_with(&steps, id, started, true));
-            let mut child = child;
-            assert!(child.wait().is_ok_and(|s| !s.success())); // it was killed
-        }
-
-        #[test]
-        fn without_force_an_erroring_polite_step_is_the_end() {
-            let (child, started) = sleeper();
-            let steps: [(KillStep, &str); 2] = [(failing_ask, "ASK"), (proc::terminate, "FORCE")];
-            assert!(!kill_with(&steps, child.id(), started, false));
-            assert!(same_process(child.id(), started)); // still running: nothing forced it
-            reap(child);
-        }
-
-        #[test]
-        fn force_escalates_when_the_polite_step_is_ignored() {
-            let (child, started) = sleeper();
-            let id = child.id();
-            let steps: [(KillStep, &str); 2] = [(ignored_ask, "ASK"), (proc::terminate, "FORCE")];
-            assert!(kill_with(&steps, id, started, true));
-            let mut child = child;
-            child.wait().unwrap();
-        }
-    }
-
-    #[test]
-    fn same_process_requires_matching_start_time() {
-        let me = std::process::id();
-        let started = proc::info(me).unwrap().started;
-        assert!(same_process(me, started));
-        assert!(!same_process(me, started + 1)); // same pid, different process
-    }
+    code
 }

@@ -1,3 +1,13 @@
+//! macOS backend.
+//!
+//! macOS has no `/proc`, and the native socket-to-process API (`libproc`) needs a lot of
+//! unsafe FFI. Instead this backend runs the system's own `lsof`, which ships with macOS and
+//! does exactly that job, and parses its machine-readable output. Process details come
+//! from [`crate::sysinfo_info`], and signals from [`crate::unix_kill`].
+//!
+//! Limitation: without `sudo`, `lsof` only reports the current user's processes, so
+//! other users' listeners are missing rather than shown as `?`.
+
 use std::io;
 use std::process::Command;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System};
@@ -5,8 +15,12 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System}
 pub use crate::sysinfo_info::info;
 pub use crate::unix_kill::{FORCEFUL, GRACEFUL, ask_exit, terminate};
 
-/// (port, pid) pairs from `lsof -F pn` output: "p<pid>" lines followed by "n<address>" lines.
-/// Connected UDP sockets ("n1.2.3.4:5->6.7.8.9:53") and unbound ones ("n*:*") are skipped.
+/// `(port, pid)` pairs from `lsof -F pn` output.
+///
+/// In field mode, `lsof` prints a `p<pid>` line for each process followed by an
+/// `n<address>` line for each of its sockets, for example `n*:3000` or `n[::1]:3000`.
+/// Connected UDP sockets (`n10.0.0.2:50000->1.1.1.1:53`) are clients, and unbound ones
+/// (`n*:*`) have no port, so both are skipped.
 pub fn parse_lsof(out: &str) -> Vec<(u16, Option<u32>)> {
     let mut pid = None;
     let mut rows = Vec::new();
@@ -23,7 +37,11 @@ pub fn parse_lsof(out: &str) -> Vec<(u16, Option<u32>)> {
     rows
 }
 
-/// Every listener as (port, pid), sorted. macOS has no /proc, so this asks the system `lsof`.
+/// Every listener as `(port, pid)`, sorted, found by asking the system `lsof`.
+///
+/// TCP uses `-iTCP -sTCP:LISTEN`; UDP has no listen state, so `-iUDP` lists every UDP
+/// socket and [`parse_lsof`] drops the connected ones. A process listening on both IPv4
+/// and IPv6 appears twice in `lsof`; duplicates are removed.
 // shortcut: without root, lsof only reports the current user's processes, so other users'
 // listeners are missing rather than shown as "?"; upgrade to libproc FFI if that matters.
 pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
@@ -45,6 +63,11 @@ pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
     rows
 }
 
+/// Is the process still running?
+///
+/// `kill(pid, 0)` sends no signal but reports whether the pid exists (`EPERM` means it
+/// exists but belongs to someone else). A zombie has already exited and only lingers until
+/// its parent collects it, so it counts as gone.
 pub fn alive(pid: u32) -> bool {
     if unsafe { libc::kill(pid as i32, 0) } != 0 {
         // ESRCH: gone. EPERM: exists but belongs to someone else.
