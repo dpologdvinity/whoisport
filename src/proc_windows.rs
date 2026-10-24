@@ -217,6 +217,29 @@ pub fn ask_exit(pid: u32) -> io::Result<()> {
     }
 }
 
+/// Is this executable name a shell or console host that merely *hosts* the target?
+///
+/// Ctrl+C reaches such a process too, but an interactive shell survives it (it interrupts
+/// its foreground job and carries on), so its presence does not make the console "shared".
+/// Covers the Windows shells (`cmd`, PowerShell), Git Bash / MSYS2 / WSL launchers
+/// (`bash`, `sh`, `zsh`, `mintty`), Nushell, and the console hosts (`conhost`,
+/// `OpenConsole`). The comparison ignores case.
+fn is_shell_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "cmd.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "bash.exe"
+            | "sh.exe"
+            | "zsh.exe"
+            | "nu.exe"
+            | "conhost.exe"
+            | "openconsole.exe"
+            | "mintty.exe"
+    )
+}
+
 /// Would Ctrl+C on the console listing `on_console` reach anything besides `target`, its
 /// descendants, plain shells, and this helper?
 ///
@@ -239,22 +262,8 @@ fn console_shared(target: u32, on_console: &[u32]) -> bool {
         false
     };
     let is_shell = |pid: u32| {
-        sys.process(Pid::from_u32(pid)).is_some_and(|p| {
-            let name = p.name().to_string_lossy().to_ascii_lowercase();
-            matches!(
-                name.as_str(),
-                "cmd.exe"
-                    | "powershell.exe"
-                    | "pwsh.exe"
-                    | "bash.exe"
-                    | "sh.exe"
-                    | "zsh.exe"
-                    | "nu.exe"
-                    | "conhost.exe"
-                    | "openconsole.exe"
-                    | "mintty.exe"
-            )
-        })
+        sys.process(Pid::from_u32(pid))
+            .is_some_and(|p| is_shell_name(&p.name().to_string_lossy()))
     };
     let me = std::process::id();
     on_console
@@ -307,5 +316,46 @@ pub fn terminate(pid: u32) -> io::Result<()> {
         let err = io::Error::last_os_error();
         CloseHandle(h);
         if ok { Ok(()) } else { Err(err) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shells_and_console_hosts_do_not_make_a_console_shared() {
+        for name in [
+            "cmd.exe",
+            "PowerShell.exe",
+            "pwsh.exe",
+            "bash.exe",
+            "mintty.exe",
+            "conhost.exe",
+        ] {
+            assert!(is_shell_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn ordinary_programs_do_make_a_console_shared() {
+        // A dev server, a runner such as `concurrently`, and look-alike names.
+        for name in [
+            "node.exe",
+            "python.exe",
+            "ping.exe",
+            "whoisport.exe",
+            "bash",
+            "cmd.exe.exe",
+        ] {
+            assert!(!is_shell_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_process_listing_with_only_the_target_is_not_shared() {
+        // This test process is its own "target" and the only entry: nothing else to disturb.
+        let me = std::process::id();
+        assert!(!console_shared(me, &[me]));
     }
 }
