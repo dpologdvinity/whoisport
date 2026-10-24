@@ -99,29 +99,46 @@ fn wait_exit(pid: u32, started: u64) -> bool {
 
 type KillStep = fn(u32) -> std::io::Result<()>;
 
+/// Ask the process to exit; with `force`, escalate if that fails or is ignored.
 fn kill(pid: u32, started: u64, force: bool) -> bool {
-    let steps: [(KillStep, &str); 2] = [
-        (proc::ask_exit, proc::GRACEFUL),
-        (proc::terminate, proc::FORCEFUL),
-    ];
-    for (step, name) in steps.into_iter().take(if force { 2 } else { 1 }) {
+    kill_with(
+        &[
+            (proc::ask_exit, proc::GRACEFUL),
+            (proc::terminate, proc::FORCEFUL),
+        ],
+        pid,
+        started,
+        force,
+    )
+}
+
+/// `steps` run in order: the first asks politely, the second forces. A step that
+/// errors (Windows refuses Ctrl+C on a shared console, a signal is denied) counts as
+/// not having worked, so `--force` still moves on to the next step.
+fn kill_with(steps: &[(KillStep, &str)], pid: u32, started: u64, force: bool) -> bool {
+    let mut asked = false;
+    for (step, name) in steps.iter().take(if force { steps.len() } else { 1 }) {
         // Re-check right before each signal: the pid may have been reused meanwhile.
         if !same_process(pid, started) {
             println!("pid {pid}: already exited");
             return true;
         }
-        if let Err(e) = step(pid) {
-            eprintln!("pid {pid}: {name} failed: {e}");
-            return false;
-        }
-        if wait_exit(pid, started) {
-            println!("pid {pid}: exited after {name}");
-            return true;
+        match step(pid) {
+            Err(e) => eprintln!("pid {pid}: {name} failed: {e}"),
+            Ok(()) => {
+                asked = true;
+                if wait_exit(pid, started) {
+                    println!("pid {pid}: exited after {name}");
+                    return true;
+                }
+            }
         }
     }
-    if force {
+    // A step that errored already explained itself; only a step that ran and was
+    // ignored leaves the process "still running".
+    if asked && force {
         eprintln!("pid {pid}: still running");
-    } else {
+    } else if asked {
         eprintln!(
             "pid {pid}: still running (use --force for {})",
             proc::FORCEFUL
@@ -385,6 +402,61 @@ mod tests {
             "ok \\u{1b}]52;c;aGk=\\u{7}x"
         );
         assert_eq!(shown("héllo wörld"), "héllo wörld");
+    }
+
+    #[cfg(unix)]
+    mod kill_steps {
+        use super::*;
+        use std::process::{Child, Command, Stdio};
+
+        fn failing_ask(_: u32) -> std::io::Result<()> {
+            Err(std::io::Error::other("refused"))
+        }
+        fn ignored_ask(_: u32) -> std::io::Result<()> {
+            Ok(()) // "succeeds" but the process keeps running, like an ignored SIGTERM
+        }
+        fn sleeper() -> (Child, u64) {
+            let child = Command::new("sleep")
+                .arg("60")
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            let started = proc::info(child.id()).unwrap().started;
+            (child, started)
+        }
+        fn reap(mut c: Child) {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+
+        #[test]
+        fn force_runs_the_forced_step_after_the_polite_one_errors() {
+            let (child, started) = sleeper();
+            let id = child.id();
+            let steps: [(KillStep, &str); 2] = [(failing_ask, "ASK"), (proc::terminate, "FORCE")];
+            assert!(kill_with(&steps, id, started, true));
+            let mut child = child;
+            assert!(child.wait().is_ok_and(|s| !s.success())); // it was killed
+        }
+
+        #[test]
+        fn without_force_an_erroring_polite_step_is_the_end() {
+            let (child, started) = sleeper();
+            let steps: [(KillStep, &str); 2] = [(failing_ask, "ASK"), (proc::terminate, "FORCE")];
+            assert!(!kill_with(&steps, child.id(), started, false));
+            assert!(same_process(child.id(), started)); // still running: nothing forced it
+            reap(child);
+        }
+
+        #[test]
+        fn force_escalates_when_the_polite_step_is_ignored() {
+            let (child, started) = sleeper();
+            let id = child.id();
+            let steps: [(KillStep, &str); 2] = [(ignored_ask, "ASK"), (proc::terminate, "FORCE")];
+            assert!(kill_with(&steps, id, started, true));
+            let mut child = child;
+            child.wait().unwrap();
+        }
     }
 
     #[test]

@@ -230,7 +230,8 @@ fn ctrl_c_is_not_sent_to_a_shared_console() {
         .expect("listener did not start");
     let (out, code) = run(&[&port, "--kill"]);
     let shell_alive = shell.try_wait().unwrap().is_none();
-    run(&[&port, "--kill", "--force"]);
+    // The refusal says "use --force"; doing exactly that must work.
+    let (forced_out, forced_code) = run(&[&port, "--kill", "--force"]);
     let _ = Command::new("taskkill")
         .args(["/F", "/T", "/PID", &shell.id().to_string()])
         .output();
@@ -244,6 +245,11 @@ fn ctrl_c_is_not_sent_to_a_shared_console() {
     assert!(
         shell_alive,
         "the shell's ping must not have been interrupted: {out}"
+    );
+    assert_eq!(forced_code, Some(0), "{forced_out}");
+    assert!(
+        forced_out.contains("exited after TerminateProcess"),
+        "{forced_out}"
     );
 }
 
