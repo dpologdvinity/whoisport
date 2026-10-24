@@ -1,0 +1,4 @@
+# Spell-check configuration (https://github.com/crate-ci/typos).
+[default.extend-words]
+# `lsof -F pn` selects the pid and name fields; `pn` is not a typo for "on".
+pn = "pn"

@@ -1,5 +1,17 @@
-// Assemble the npm packages for one release from its GitHub release assets.
-// Usage: node npm/build.mjs <version> <assets-dir> <out-dir>
+/**
+ * Assemble the npm packages for one release from its GitHub release assets.
+ *
+ * Usage: node npm/build.mjs <version> <assets-dir> <out-dir>
+ *
+ *   version     the release version without the `v`, e.g. 0.5.4
+ *   assets-dir  where the release's `.tar.gz` / `.zip` files were downloaded
+ *   out-dir     where to write the packages (wiped first)
+ *
+ * It writes six packages under out-dir, ready for `npm publish`: five platform packages
+ * (each holding one binary, restricted by `os`/`cpu`) and the `whoisport` launcher that
+ * depends on all of them as optional dependencies. Run by the `npm` job in
+ * .github/workflows/release.yml.
+ */
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,13 +23,14 @@ if (!/^\d+\.\d+\.\d+$/.test(version ?? "") || !assets || !out) {
   process.exit(2);
 }
 const repo = "https://github.com/dpologdvinity/whoisport";
+/** Fields every package shares. */
 const common = {
   version,
   license: "MIT",
   repository: { type: "git", url: `git+${repo}.git` },
   homepage: repo,
 };
-// npm package suffix -> [Rust target, os, cpu]
+/** npm package suffix -> [Rust target triple, npm `os`, npm `cpu`]. */
 const platforms = {
   "linux-x64": ["x86_64-unknown-linux-musl", "linux", "x64"],
   "linux-arm64": ["aarch64-unknown-linux-musl", "linux", "arm64"],
@@ -26,6 +39,7 @@ const platforms = {
   "win32-x64": ["x86_64-pc-windows-msvc", "win32", "x64"],
 };
 
+// One package per platform: unpack that platform's release asset and keep only the binary.
 rmSync(out, { recursive: true, force: true });
 for (const [suffix, [target, os, cpu]] of Object.entries(platforms)) {
   const dir = join(out, `whoisport-${suffix}`);
@@ -58,6 +72,8 @@ for (const [suffix, [target, os, cpu]] of Object.entries(platforms)) {
   );
 }
 
+// The launcher package: no binary, just bin/whoisport.js and optional dependencies on the
+// five platform packages at exactly this version.
 const main = join(out, "whoisport");
 mkdirSync(join(main, "bin"), { recursive: true });
 copyFileSync(new URL("./whoisport/bin/whoisport.js", import.meta.url), join(main, "bin", "whoisport.js"));

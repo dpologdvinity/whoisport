@@ -1,3 +1,5 @@
+# whoisport: show what is listening on a TCP or UDP port, and optionally kill it.
+# See ARCHITECTURE.md for how the crate is organised.
 [package]
 name = "whoisport"
 version = "0.5.4"
@@ -10,8 +12,10 @@ repository = "https://github.com/dpologdvinity/whoisport"
 authors = ["Kaitlyn Bassford"]
 keywords = ["port", "process", "cli", "lsof", "devtools"]
 categories = ["command-line-utilities", "development-tools"]
+# Not needed to build the crate: the demo, other packagers' files, and CI config.
 exclude = ["demo.gif", "demo.tape", ".github", "bucket", "pyproject.toml", "npm"]
 
+# Dependencies are kept minimal. Platform-specific ones are under [target.*] below.
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 serde_json = "1.0.154"
@@ -22,6 +26,7 @@ pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ targe
 bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 
+# Windows releases are .zip files, not .tar.gz.
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.zip"
 pkg-fmt = "zip"
@@ -43,17 +48,22 @@ assets = [
     { source = "README.md", dest = "/usr/share/doc/whoisport/README.md", mode = "644", doc = true },
 ]
 
+# Small, fast release binaries: link-time optimisation, one codegen unit, stripped symbols.
+# `panic = "abort"` drops the unwinding machinery (nothing here relies on catching panics).
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
 
+# Linux and macOS: `libc` for kill(2) and sysconf(3).
 [target."cfg(unix)".dependencies]
 libc = "0.2.191"
 
+# Windows and macOS have no /proc: `sysinfo` reads process details (see src/sysinfo_info.rs).
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 sysinfo = { version = "0.39.6", default-features = false, features = ["system", "user"] }
 
+# Windows only: the IP Helper, console and window APIs (see src/proc_windows.rs).
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Threading", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
