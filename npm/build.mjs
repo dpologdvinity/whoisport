@@ -36,7 +36,9 @@ const platforms = {
   "linux-arm64": ["aarch64-unknown-linux-musl", "linux", "arm64"],
   "darwin-x64": ["x86_64-apple-darwin", "darwin", "x64"],
   "darwin-arm64": ["aarch64-apple-darwin", "darwin", "arm64"],
-  "win32-x64": ["x86_64-pc-windows-msvc", "win32", "x64"],
+  // Named "windows", not "win32": npm's spam filter rejects the name `whoisport-win32-x64`
+  // (E403). The `os` field below is still npm's own "win32".
+  "windows-x64": ["x86_64-pc-windows-msvc", "win32", "x64"],
 };
 
 // One package per platform: unpack that platform's release asset and keep only the binary.
