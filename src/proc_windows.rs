@@ -23,7 +23,8 @@ use std::io;
 use std::os::windows::process::CommandExt;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, HWND, LPARAM, NO_ERROR, WAIT_TIMEOUT,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, HWND, LPARAM, NO_ERROR,
+    WAIT_TIMEOUT,
 };
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6TABLE_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
@@ -66,7 +67,12 @@ fn socket_table(family: u16, udp: bool) -> Vec<u32> {
     let mut size = 0u32;
     let mut buf: Vec<u32> = Vec::new();
     loop {
-        let (ptr, af) = (buf.as_mut_ptr().cast(), family as u32);
+        let ptr = if buf.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            buf.as_mut_ptr().cast()
+        };
+        let af = family as u32;
         // SAFETY: `ptr` is null (size query) or points to `buf`, which is at least `size`
         // bytes as reported by the previous call; `size` is a valid out-parameter.
         let r = unsafe {
@@ -147,7 +153,7 @@ pub fn alive(pid: u32) -> bool {
         let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
         if h.is_null() {
             // Gone (invalid pid) vs. exists-but-protected (access denied).
-            return io::Error::last_os_error().raw_os_error() == Some(5);
+            return io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32);
         }
         let running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
         CloseHandle(h);
@@ -235,7 +241,19 @@ fn console_shared(target: u32, on_console: &[u32]) -> bool {
     let is_shell = |pid: u32| {
         sys.process(Pid::from_u32(pid)).is_some_and(|p| {
             let name = p.name().to_string_lossy().to_ascii_lowercase();
-            matches!(name.as_str(), "cmd.exe" | "powershell.exe" | "pwsh.exe")
+            matches!(
+                name.as_str(),
+                "cmd.exe"
+                    | "powershell.exe"
+                    | "pwsh.exe"
+                    | "bash.exe"
+                    | "sh.exe"
+                    | "zsh.exe"
+                    | "nu.exe"
+                    | "conhost.exe"
+                    | "openconsole.exe"
+                    | "mintty.exe"
+            )
         })
     };
     let me = std::process::id();

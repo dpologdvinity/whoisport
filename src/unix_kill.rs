@@ -15,6 +15,9 @@ pub const FORCEFUL: &str = "SIGKILL";
 /// Send `sig` to `pid`; the operating system's error (for example `EPERM` for another
 /// user's process) is returned as-is.
 fn signal(pid: u32, sig: libc::c_int) -> io::Result<()> {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
     // SAFETY: kill(2) takes plain integers and has no memory-safety preconditions.
     match unsafe { libc::kill(pid as i32, sig) } {
         0 => Ok(()),

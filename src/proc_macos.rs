@@ -69,6 +69,9 @@ pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
 /// exists but belongs to someone else). A zombie has already exited and only lingers until
 /// its parent collects it, so it counts as gone.
 pub fn alive(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     if unsafe { libc::kill(pid as i32, 0) } != 0 {
         // ESRCH: gone. EPERM: exists but belongs to someone else.
         return io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);

@@ -117,9 +117,37 @@ pub fn parse_stat(stat: &str) -> Option<(u32, u64)> {
     Some((rest.get(1)?.parse().ok()?, rest.get(19)?.parse().ok()?))
 }
 
-/// The user name for a numeric id, from `/etc/passwd`; the number itself if not found
-/// (for example users that only exist in LDAP).
-fn user_name(uid: u32) -> String {
+/// The user name for a numeric id, from NSS or `/etc/passwd`; the number itself if not
+/// found (for example unknown users).
+fn lookup_user_name(uid: u32) -> String {
+    let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    let mut buf = vec![0u8; 1024];
+    loop {
+        let ret = unsafe {
+            libc::getpwuid_r(
+                uid,
+                pwd.as_mut_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if ret == 0 {
+            if !result.is_null() {
+                let name_ptr = unsafe { (*result).pw_name };
+                if !name_ptr.is_null() {
+                    let cstr = unsafe { std::ffi::CStr::from_ptr(name_ptr) };
+                    return cstr.to_string_lossy().into_owned();
+                }
+            }
+            break;
+        } else if ret == libc::ERANGE && buf.len() < 65536 {
+            buf.resize(buf.len() * 2, 0);
+        } else {
+            break;
+        }
+    }
     fs::read_to_string("/etc/passwd")
         .ok()
         .and_then(|p| {
@@ -129,6 +157,22 @@ fn user_name(uid: u32) -> String {
             })
         })
         .unwrap_or_else(|| uid.to_string())
+}
+
+/// The user name for a numeric id, cached in memory.
+fn user_name(uid: u32) -> String {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<u32, String>>> = Mutex::new(None);
+    if let Ok(mut guard) = CACHE.lock() {
+        let cache = guard.get_or_insert_with(HashMap::new);
+        if let Some(name) = cache.get(&uid) {
+            return name.clone();
+        }
+        let name = lookup_user_name(uid);
+        cache.insert(uid, name.clone());
+        return name;
+    }
+    lookup_user_name(uid)
 }
 
 /// Details of one process, or `None` if it cannot be read (it exited, or is not ours to

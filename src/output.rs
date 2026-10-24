@@ -33,10 +33,21 @@ pub fn fmt_duration(secs: u64) -> String {
 ///
 /// Command lines and paths are controlled by whoever started the process, and may hold
 /// terminal escape sequences that move the cursor, clear the screen, or set the clipboard
-/// (OSC 52). Control characters are written out as escapes (`\u{1b}`) instead.
+/// (OSC 52), as well as bidi override characters that visually reorder text. Control
+/// characters and unsafe unicode format characters are written out as escapes (`\u{1b}`).
 pub fn shown(text: &str) -> String {
+    let is_unsafe = |c: char| {
+        c.is_control()
+            || matches!(
+                c,
+                '\u{202a}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}'
+                    | '\u{200b}'..='\u{200f}'
+                    | '\u{feff}'
+            )
+    };
     text.chars()
-        .flat_map(|c| match c.is_control() {
+        .flat_map(|c| match is_unsafe(c) {
             true => c.escape_default().collect::<Vec<_>>(),
             false => vec![c],
         })
@@ -45,10 +56,16 @@ pub fn shown(text: &str) -> String {
 
 /// Cut `text` to at most `max` characters, ending in `…` when something was removed.
 pub fn truncate(text: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if text.chars().count() <= max {
         return text.to_string();
     }
-    text.chars().take(max - 1).chain(['…']).collect()
+    text.chars()
+        .take(max.saturating_sub(1))
+        .chain(['…'])
+        .collect()
 }
 
 /// `docker: name (image)`, the table's stand-in for a command line.
@@ -79,8 +96,9 @@ pub fn format_table(rows: &[Row], udp: bool) -> String {
                 );
             }
             None => {
+                let pid = row.pid.map_or("?".into(), |p| p.to_string());
                 let cmd = docker.unwrap_or_else(|| "?".into());
-                out += &format!("{port:<width$} {:<8} {:<10} {}\n", "?", "?", shown(&cmd));
+                out += &format!("{port:<width$} {:<8} {:<10} {}\n", pid, "?", shown(&cmd));
             }
         }
     }
@@ -209,6 +227,7 @@ mod tests {
 
     #[test]
     fn truncate_keeps_short_text_and_marks_cut_text() {
+        assert_eq!(truncate("abc", 0), "");
         assert_eq!(truncate("abc", 3), "abc");
         assert_eq!(truncate("abcd", 3), "ab…");
         assert_eq!(truncate("héllo wörld", 6), "héllo…"); // counts characters, not bytes
@@ -221,6 +240,7 @@ mod tests {
             "ok \\u{1b}]52;c;aGk=\\u{7}x"
         );
         assert_eq!(shown("héllo wörld"), "héllo wörld");
+        assert_eq!(shown("a\u{202e}b"), "a\\u{202e}b");
     }
 
     #[test]
