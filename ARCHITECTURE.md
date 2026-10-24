@@ -65,6 +65,8 @@ Linux build compiles neither `sysinfo` nor `windows-sys`.
 | `src/unix_kill.rs` | `SIGTERM` / `SIGKILL`, shared by the Linux and macOS backends. |
 | `src/docker.rs` | Names the container behind a published port, with a time limit. |
 | `tests/cli.rs` | End-to-end tests: run the real binary against real sockets. |
+| `install.sh`, `install.ps1` | The one-line installers (section 10). Not part of the crate; attached to every release. |
+| `tests/install_test.sh`, `tests/install_test.ps1` | Tests for the installers, against a fake release served from disk. |
 
 The separation that matters: **scanning and printing never mix**. `Scan::new` gathers
 everything first; after that, `output` and `kill` work on in-memory data. That is what
@@ -245,11 +247,15 @@ create (check tag == Cargo.toml version, run tests, make a DRAFT release)
               └─► npm           (off unless the NPM_PUBLISH variable is "true")
 ```
 
-Nothing is public until every build has succeeded. Channels:
+Nothing is public until every build has succeeded. Just before the release is made public, the
+`publish` job also uploads `SHA256SUMS` (the checksum of every release file) and the two
+installers. After it is public, `installer-smoke` runs the *published* installers on Linux,
+macOS and Windows, from the URLs users will use. Channels:
 
 | Channel | How it gets a new version |
 |---------|---------------------------|
-| GitHub Releases (binaries, `.deb`, `.rpm`) | `release.yml` |
+| GitHub Releases (binaries, `.deb`, `.rpm`, `SHA256SUMS`) | `release.yml` |
+| One-line installers (`curl … \| sh`, `irm … \| iex`) | `install.sh` / `install.ps1`, attached to each release by `release.yml`; `releases/latest/download/install.sh` always serves the newest release's script |
 | crates.io | manual `cargo publish` after the tag |
 | PyPI (wheels that contain the binary, built with maturin) | `release.yml`, trusted publishing |
 | Scoop (separate `scoop-whoisport` repository) | its own workflow polls for new releases every 6 hours and updates the manifest from the release's published SHA-256 |
@@ -257,6 +263,20 @@ Nothing is public until every build has succeeded. Channels:
 | `cargo binstall` | reads `[package.metadata.binstall]` in `Cargo.toml`; uses the release assets |
 | winget | manual pull request to `microsoft/winget-pkgs` |
 | npm | the packaging is in `npm/`; the publish job is switched off until npm trusted publishing is configured for each package |
+
+### The installers
+
+`install.sh` (POSIX shell) and `install.ps1` (PowerShell 5.1 and 7) do the same five things:
+pick the release target for this machine, resolve "latest" from the `/releases/latest`
+redirect (no API call, so no rate limit), download the archive and `SHA256SUMS`, **verify the
+archive's SHA-256 and refuse to install if it does not match or no checksum is listed**, and
+copy the binary into a user-writable directory (no administrator rights). Each script is
+wrapped in functions and only runs on its last line, so a download cut off halfway cannot
+execute a partial command. The release URL can be overridden (`WHOISPORT_BASE_URL`), which
+lets the tests serve a fake release from disk with no network. The shell version is tested by
+`tests/install_test.sh` (checksum mismatch, missing checksum file, option handling, target
+detection) and the PowerShell version by `tests/install_test.ps1` under both Windows
+PowerShell 5.1 and PowerShell 7 (including the `PATH` edit).
 
 ## 11. Decisions and trade-offs
 

@@ -3,7 +3,8 @@
 #
 #   lint ─┬─► test (4 platforms) ──► build (4 platforms) ─┐
 #         ├─► coverage                                     │
-#         └─► package                                      ├─► ci-ok  (the one required check)
+#         ├─► package                                      ├─► ci-ok  (the one required check)
+#         └─► installer-windows                            │
 #   audit ────────────────────────────────────────────────┘
 #
 # Order is fail-fast: cheap checks first (`lint`), so a formatting slip never waits for a
@@ -81,6 +82,12 @@ jobs:
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
       - name: npm launcher and build script agree on package names
         run: node npm/check.mjs
+      # shellcheck and pwsh come with the runner image.
+      - name: Installers (shell lint, PowerShell syntax, shell installer tests)
+        run: |
+          shellcheck install.sh tests/install_test.sh
+          pwsh -NoProfile -File tests/check_powershell_syntax.ps1 install.ps1 tests/install_test.ps1 tests/check_powershell_syntax.ps1
+          sh tests/install_test.sh
 
   # 2. Known vulnerabilities in dependencies (RustSec advisory database). Independent of
   #    the other jobs, so it runs in parallel.
@@ -202,12 +209,34 @@ jobs:
           path: target/release/${{ matrix.file }}
           retention-days: 7
 
-  # 7. One job that summarises all of the above. Require this single check in branch
+  # 7. The Windows installer, tested on Windows under both PowerShell versions: the one
+  #    `irm | iex` runs in by default (Windows PowerShell 5.1) and PowerShell 7.
+  installer-windows:
+    name: Windows installer
+    needs: lint
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --release --locked
+      - name: PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/install_test.ps1 -Exe target/release/whoisport.exe
+      - name: Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/install_test.ps1 -Exe target/release/whoisport.exe
+
+  # 8. One job that summarises all of the above. Require this single check in branch
   #    protection instead of listing each job (a skipped or renamed job would otherwise
   #    silently stop being required).
   ci-ok:
     name: CI passed
-    needs: [lint, audit, test, coverage, package, build]
+    needs: [lint, audit, test, coverage, package, build, installer-windows]
     if: always()
     runs-on: ubuntu-latest
     steps:
