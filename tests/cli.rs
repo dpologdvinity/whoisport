@@ -263,14 +263,28 @@ fn ctrl_c_is_not_sent_to_a_shared_console() {
     ))
     .creation_flags(0x10); // CREATE_NEW_CONSOLE
     let mut shell = cmd.spawn().unwrap();
-    let port = (0..100)
-        .find_map(|_| {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            std::fs::read_to_string(&port_file)
-                .ok()
-                .filter(|p| !p.is_empty())
-        })
-        .expect("listener did not start");
+    // Python's first start on a busy CI runner can take many seconds (the suite runs its
+    // tests in parallel), so wait up to a minute, and clean up if it never comes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let port = loop {
+        if let Some(p) = std::fs::read_to_string(&port_file)
+            .ok()
+            .filter(|p| !p.is_empty())
+        {
+            break p;
+        }
+        if std::time::Instant::now() > deadline {
+            let exited = shell.try_wait().unwrap();
+            let _ = Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &shell.id().to_string()])
+                .output();
+            let _ = std::fs::remove_dir_all(&dir);
+            panic!(
+                "the listener did not start within 60 s (the console process exited: {exited:?})"
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
     let (out, code) = run(&[&port, "--kill"]);
     let shell_alive = shell.try_wait().unwrap().is_none();
     // The refusal says "use --force"; doing exactly that must work.
