@@ -42,6 +42,34 @@ const platforms = {
 };
 
 // One package per platform: unpack that platform's release asset and keep only the binary.
+/**
+ * The README of a platform package. People land on these pages from `npm ls` or a search, so
+ * it says what the package is and sends them to the one they should install.
+ */
+function platformReadme(name, os, cpu) {
+  // npm's identifiers ("win32", "x64") are not how people name their systems.
+  const system = { win32: "Windows", darwin: "macOS", linux: "Linux" }[os] ?? os;
+  const arch = { x64: "x86-64", arm64: "ARM64" }[cpu] ?? cpu;
+  return `# ${name}
+
+The [whoisport](https://github.com/dpologdvinity/whoisport) command-line program for
+${system} (${arch}). **You do not install this package yourself.**
+
+whoisport shows what is listening on a TCP or UDP port, who started it, and can stop it
+safely. Install the main package instead; it pulls in the matching binary for your
+system automatically:
+
+\`\`\`sh
+npm install -g whoisport    # or: pnpm add -g whoisport, yarn global add whoisport, bun add -g whoisport
+whoisport 3000              # what is on port 3000?
+\`\`\`
+
+- Documentation: https://github.com/dpologdvinity/whoisport#readme
+- Issues: https://github.com/dpologdvinity/whoisport/issues
+- License: MIT
+`;
+}
+
 rmSync(out, { recursive: true, force: true });
 for (const [suffix, [target, os, cpu]] of Object.entries(platforms)) {
   const dir = join(out, `whoisport-${suffix}`);
@@ -72,6 +100,9 @@ for (const [suffix, [target, os, cpu]] of Object.entries(platforms)) {
       2,
     ) + "\n",
   );
+  // npm shows a package's README on its page; without one the page says "no README".
+  writeFileSync(join(dir, "README.md"), platformReadme(`whoisport-${suffix}`, os, cpu));
+  copyFileSync(new URL("../LICENSE", import.meta.url), join(dir, "LICENSE"));
 }
 
 // The launcher package: no binary, just bin/whoisport.js and optional dependencies on the
