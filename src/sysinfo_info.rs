@@ -1,13 +1,27 @@
-//! Process details via sysinfo, for platforms without a /proc to read (Windows, macOS).
+//! Process details through the `sysinfo` crate.
+//!
+//! Windows and macOS have no `/proc` to read, and the native calls for a process's command
+//! line, working directory and owner differ widely (and on Windows involve reading another
+//! process's memory). `sysinfo` already handles all of that, so both backends share this
+//! one implementation of `info`.
+
 use crate::Info;
 use std::sync::OnceLock;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 
+/// The system's user list, loaded once: it is needed to turn a user id into a name, and
+/// loading it is slower than looking a name up.
 fn users() -> &'static Users {
     static USERS: OnceLock<Users> = OnceLock::new();
     USERS.get_or_init(Users::new_with_refreshed_list)
 }
 
+/// Details of one process, or `None` if it does not exist or cannot be read.
+///
+/// Only this one process is refreshed (not the whole process table), and only the fields
+/// we show. When the command line is hidden (elevated or system processes), the
+/// executable path or the process name is shown instead. `started` is the start time in
+/// seconds since the epoch.
 pub fn info(pid: u32) -> Option<Info> {
     let p = Pid::from_u32(pid);
     let mut sys = System::new();

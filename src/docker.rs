@@ -1,6 +1,23 @@
+//! Naming the Docker container behind a published port.
+//!
+//! Docker publishes a container port on the host through a forwarder process
+//! (`docker-proxy` on Linux, `com.docker.backend` in Docker Desktop). That process alone
+//! says nothing about *which* container it serves, so we ask the local Docker daemon
+//! (`docker ps`). The lookup is best-effort: if Docker is missing, down, remote, or too
+//! slow, the names are simply left out and everything else still works.
+
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// A running Docker container that publishes a host port.
+#[derive(Clone)]
+pub struct Container {
+    /// The container's name, e.g. `web`.
+    pub name: String,
+    /// The image it runs, e.g. `nginx:alpine`.
+    pub image: String,
+}
 
 /// How long a `docker` call may take. A stuck daemon (Docker Desktop right after wake,
 /// a dead remote) would otherwise hang whoisport, the tool people reach for when
@@ -79,8 +96,10 @@ fn endpoint() -> Option<String> {
     Some(out.trim().to_string())
 }
 
-/// (host port, container name, image) for every port published by a running container.
-pub fn published(udp: bool) -> Vec<(u16, String, String)> {
+/// Every host port published by a running container, with that container.
+///
+/// Empty when the Docker daemon is not local, not running, not allowed, or too slow.
+pub fn published(udp: bool) -> Vec<(u16, Container)> {
     // A remote context (ssh://, a remote tcp:// host) lists another machine's containers.
     if !endpoint().is_some_and(|e| is_local_endpoint(&e)) {
         return Vec::new();
@@ -89,21 +108,35 @@ pub fn published(udp: bool) -> Vec<(u16, String, String)> {
     let Some(out) = docker(&["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}"]) else {
         return Vec::new();
     };
-    out.lines()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            Some((f.next()?, f.next()?, f.next()?))
+    parse_ps(&out, udp)
+}
+
+/// Parse `docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}'` output into
+/// `(host port, container)` pairs for the requested protocol.
+fn parse_ps(output: &str, udp: bool) -> Vec<(u16, Container)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, '\t');
+            Some((fields.next()?, fields.next()?, fields.next()?))
         })
         .flat_map(|(name, image, ports)| {
-            host_ports(ports, udp)
-                .into_iter()
-                .map(|p| (p, name.to_string(), image.to_string()))
+            host_ports(ports, udp).into_iter().map(|port| {
+                let container = Container {
+                    name: name.to_string(),
+                    image: image.to_string(),
+                };
+                (port, container)
+            })
         })
         .collect()
 }
 
-/// Host ports from a `docker ps` Ports column, e.g.
-/// "0.0.0.0:8080->80/tcp, [::]:8080->80/tcp, 0.0.0.0:9000-9001->9000-9001/udp, 5432/tcp".
+/// Host ports from a `docker ps` Ports column, for TCP or UDP.
+///
+/// For example `"0.0.0.0:8080->80/tcp, [::]:8080->80/tcp, 0.0.0.0:9000-9001->9000-9001/udp,
+/// 5432/tcp"` gives `[8080]` for TCP and `[9000, 9001]` for UDP. Ports a container only
+/// exposes internally (`5432/tcp`, no `->`) are not on the host, so they are left out.
 pub fn host_ports(ports: &str, udp: bool) -> Vec<u16> {
     let proto = if udp { "/udp" } else { "/tcp" };
     let mut out: Vec<u16> = ports
@@ -125,6 +158,31 @@ pub fn host_ports(ports: &str, udp: bool) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_ps_pairs_each_host_port_with_its_container() {
+        let out = "web\tnginx:alpine\t0.0.0.0:8080->80/tcp, [::]:8080->80/tcp\n\
+                   db\tpostgres\t5432/tcp\n\
+                   dns\tcoredns\t0.0.0.0:5353->53/udp\n";
+        let tcp = parse_ps(out, false);
+        assert_eq!(tcp.len(), 1); // db exposes 5432 only inside Docker
+        assert_eq!(tcp[0].0, 8080);
+        assert_eq!(tcp[0].1.name, "web");
+        assert_eq!(tcp[0].1.image, "nginx:alpine");
+        let udp = parse_ps(out, true);
+        assert_eq!(udp.len(), 1);
+        assert_eq!((udp[0].0, udp[0].1.name.as_str()), (5353, "dns"));
+        assert!(parse_ps("not a valid line\n", false).is_empty());
+    }
+
+    #[test]
+    fn is_docker_matches_the_forwarder_processes() {
+        assert!(is_docker(
+            "/usr/bin/docker-proxy -proto tcp -host-port 8080"
+        ));
+        assert!(is_docker("com.docker.backend"));
+        assert!(!is_docker("python3 -m http.server"));
+    }
 
     #[test]
     fn host_ports_parses_docker_ps_column() {

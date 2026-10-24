@@ -1,12 +1,33 @@
+//! Linux backend: reads the kernel's `/proc` filesystem. No external tools, no libraries.
+//!
+//! How a port is traced to a process:
+//!
+//! 1. `/proc/net/{tcp,tcp6,udp,udp6}` list every socket with its port and an *inode*
+//!    number (the socket's identity). See [`listen_sockets`].
+//! 2. Every process lists its open files in `/proc/<pid>/fd/`; a socket shows up as a
+//!    link named `socket:[<inode>]`. Matching inodes gives the owning pids
+//!    ([`socket_owners`]).
+//! 3. `/proc/<pid>/{stat,cmdline,cwd}` and the owner of `/proc/<pid>` give the details
+//!    ([`info`]).
+//!
+//! A process of another user has an unreadable `/proc/<pid>/fd`, so its sockets have no
+//! owner and are reported with `pid = None` (shown as `?`).
+
 use crate::Info;
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 
+// Signals are the same on every Unix, so the kill functions are shared with macOS.
 pub use crate::unix_kill::{FORCEFUL, GRACEFUL, ask_exit, terminate};
 
-/// (port, socket inode) of listening sockets in a /proc/net/{tcp,udp}{,6} dump.
-/// TCP: LISTEN state. UDP has no listen state: bound (07) with no remote peer.
+/// `(port, socket inode)` of the listening sockets in a `/proc/net/{tcp,udp}{,6}` dump.
+///
+/// Each data line looks like `0: 0100007F:0BB8 00000000:0000 0A ... <inode> ...`: the
+/// local address (`IP:PORT` in hex), the remote address, a state code, and later the
+/// inode. TCP counts state `0A` (LISTEN). UDP has no listen state, so it counts state
+/// `07` (bound) with no remote peer (remote port `0000`); a connected UDP socket is a
+/// client, not a server.
 pub fn listen_sockets(table: &str, udp: bool) -> Vec<(u16, u64)> {
     table
         .lines()
@@ -23,7 +44,12 @@ pub fn listen_sockets(table: &str, udp: bool) -> Vec<(u16, u64)> {
         .collect()
 }
 
-/// socket inode -> owning PIDs, for every process whose fds we can read.
+/// Map each socket inode to the pids that hold it open, for every process whose
+/// `/proc/<pid>/fd` we are allowed to read.
+///
+/// More than one pid can hold a socket (a parent that forked, a supervisor). A process we
+/// cannot read, or one that exits during the scan, is skipped; its sockets then have no
+/// owner in the map.
 fn socket_owners() -> HashMap<u64, Vec<u32>> {
     let mut owners: HashMap<u64, Vec<u32>> = HashMap::new();
     let Ok(dir) = fs::read_dir("/proc") else {
@@ -55,7 +81,10 @@ fn socket_owners() -> HashMap<u64, Vec<u32>> {
     owners
 }
 
-/// Every listener as (port, pid), sorted; pid is None when the owner is unreadable.
+/// Every listener as `(port, pid)`, sorted; `pid` is `None` when the owner is unreadable.
+///
+/// A process that listens on both IPv4 and IPv6 yields the same pair twice; duplicates are
+/// removed.
 pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
     let proto = if udp { "udp" } else { "tcp" };
     let sockets: Vec<(u16, u64)> = ["", "6"]
@@ -76,13 +105,20 @@ pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
     out
 }
 
-/// (ppid, start time in clock ticks since boot) from a /proc/<pid>/stat line.
+/// `(parent pid, start time in clock ticks since boot)` from a `/proc/<pid>/stat` line.
+///
+/// The line is `pid (comm) state ppid ... starttime ...`. The command name `comm` can
+/// itself contain spaces and parentheses, so the fields are counted from the *last* `)`.
+/// After it, index 1 is the parent pid and index 19 the start time (fields 4 and 22 of
+/// proc(5)).
 pub fn parse_stat(stat: &str) -> Option<(u32, u64)> {
     // comm (field 2) may contain spaces and parens, so split after the last ')'.
     let rest: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
     Some((rest.get(1)?.parse().ok()?, rest.get(19)?.parse().ok()?))
 }
 
+/// The user name for a numeric id, from `/etc/passwd`; the number itself if not found
+/// (for example users that only exist in LDAP).
 fn user_name(uid: u32) -> String {
     fs::read_to_string("/etc/passwd")
         .ok()
@@ -95,6 +131,12 @@ fn user_name(uid: u32) -> String {
         .unwrap_or_else(|| uid.to_string())
 }
 
+/// Details of one process, or `None` if it cannot be read (it exited, or is not ours to
+/// see).
+///
+/// `started` is the process start time in clock ticks since boot; the uptime is derived
+/// from it and `/proc/uptime`. The command line is read as raw bytes and decoded leniently,
+/// because arguments are arbitrary bytes and need not be valid UTF-8.
 pub fn info(pid: u32) -> Option<Info> {
     let base = format!("/proc/{pid}");
     let (ppid, start_ticks) = parse_stat(&fs::read_to_string(format!("{base}/stat")).ok()?)?;
@@ -114,6 +156,7 @@ pub fn info(pid: u32) -> Option<Info> {
         .next()?
         .parse()
         .ok()?;
+    // SAFETY: sysconf only reads a system constant; _SC_CLK_TCK is always valid.
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
     Some(Info {
         pid,
@@ -126,7 +169,10 @@ pub fn info(pid: u32) -> Option<Info> {
     })
 }
 
-/// A zombie (state Z) has already exited; it only lingers until its parent reaps it.
+/// Is the process still running?
+///
+/// A zombie (state `Z`) has already exited; it only lingers in `/proc` until its parent
+/// collects it, so it counts as gone.
 pub fn alive(pid: u32) -> bool {
     fs::read_to_string(format!("/proc/{pid}/stat"))
         .ok()
