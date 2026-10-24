@@ -134,7 +134,13 @@ fn kill(pid: u32, started: u64, force: bool) -> bool {
 fn is_service_manager(pid: u32, cmd: &str) -> bool {
     let exe = cmd.split_whitespace().next().unwrap_or("");
     let name = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
-    pid == 1 || name == "systemd" || name == "launchd"
+    // svchost.exe and services.exe host many Windows services (RPC on 135, DNS, ...).
+    let name = name.to_ascii_lowercase();
+    pid == 1
+        || matches!(
+            name.as_str(),
+            "systemd" | "launchd" | "svchost.exe" | "services.exe"
+        )
 }
 
 /// Is `ancestor` somewhere up `pid`'s parent chain?
@@ -284,7 +290,7 @@ fn main() -> ExitCode {
             .filter(|r| r.0 == *port)
             .filter_map(|r| r.2.as_ref().map(|i| i.pid))
             .collect();
-        let mut signalled_any = false;
+        let mut skipped: Vec<u32> = Vec::new();
         for (_, pid, info) in rows.iter().filter(|r| r.0 == *port) {
             let docker_line = container(*port, info).map_or(String::new(), |(n, img)| {
                 format!("docker  {} ({})\n", shown(&n), shown(&img))
@@ -327,9 +333,9 @@ fn main() -> ExitCode {
             }
             if let Some(reason) = skip_reason(i, &holders) {
                 eprintln!("pid {}: not killed: {reason}", i.pid);
+                skipped.push(i.pid);
                 continue;
             }
-            signalled_any = true;
             if !killed.contains(&i.pid) {
                 killed.push(i.pid); // one process can hold several requested ports
                 if !kill(i.pid, i.started, args.force) {
@@ -337,8 +343,16 @@ fn main() -> ExitCode {
                 }
             }
         }
-        if args.kill && !holders.is_empty() && !signalled_any {
-            code = 3; // every holder was skipped, so the port is still taken
+        // A skipped holder (a supervisor, say) may respawn what was killed or keep the
+        // socket open itself, so the port is not known to be free.
+        if args.kill && !skipped.is_empty() {
+            let pids: Vec<String> = skipped.iter().map(u32::to_string).collect();
+            eprintln!(
+                "port {}: still held by pid {}, which was not killed",
+                label(*port),
+                pids.join(", ")
+            );
+            code = 3;
         }
     }
     ExitCode::from(code)
@@ -353,6 +367,10 @@ mod tests {
         assert!(is_service_manager(1, "/sbin/init"));
         assert!(is_service_manager(812, "/usr/lib/systemd/systemd --user"));
         assert!(is_service_manager(90, "/sbin/launchd"));
+        assert!(is_service_manager(
+            1652,
+            r"C:\Windows\System32\svchost.exe -k RPCSS"
+        ));
         assert!(!is_service_manager(4242, "python3 -m http.server 3000"));
         assert!(!is_service_manager(
             4243,

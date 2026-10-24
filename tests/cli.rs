@@ -192,9 +192,11 @@ fn kill_spares_parent_that_shares_the_socket() {
     let parent_alive = parent.try_wait().unwrap().is_none();
     parent.kill().unwrap();
     parent.wait().unwrap();
-    assert_eq!(code, Some(0), "{out}");
+    // The child is stopped, but the skipped parent still holds the port, so this is a failure.
+    assert_eq!(code, Some(3), "{out}");
     assert!(out.contains(&format!("pid {child}: exited after")), "{out}");
     assert!(out.contains("not killed: it is a parent of pid"), "{out}");
+    assert!(out.contains("still held by pid"), "{out}");
     assert!(parent_alive, "{out}");
 }
 

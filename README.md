@@ -91,7 +91,11 @@ Docker: when a port is published by a container, whoisport shows the container
 name and image (`docker  web (nginx:alpine)`), even when the `docker-proxy`
 process itself is owned by root. It asks `docker ps` only in that case.
 
-`--kill` always needs explicit ports; it never kills everything.
+`--kill` always needs explicit ports; it never kills everything. When several
+processes hold one socket, it signals only the innermost ones: service managers
+(`systemd`, `launchd`, `svchost.exe`) and parents of another holder are never
+signalled, because stopping them can take down far more than the port. If any
+holder was skipped, whoisport says which one still holds the port and exits `3`.
 
 How `--kill` asks, per platform:
 
@@ -105,7 +109,7 @@ sends it when the target's console holds nothing but the target, its child
 processes and a shell. Otherwise it says so and leaves the choice of `--force` to you.
 
 Exit codes: `0` success, `1` a requested port had nothing listening (or nothing
-is listening at all), `2` invalid arguments, `3` a kill failed.
+is listening at all), `2` invalid arguments, `3` a kill failed or a holder was skipped, so the port may still be in use.
 
 Checks IPv4 and IPv6 TCP sockets in the LISTEN state. On Linux, processes owned
 by other users can't be inspected without `sudo`; they show up as `?`. On
