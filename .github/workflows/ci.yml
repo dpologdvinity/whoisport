@@ -1,18 +1,219 @@
+# Continuous integration. Runs on every push to the default branch and on every pull
+# request, plus weekly (new security advisories can appear without any code change).
+#
+#   lint ─┬─► test (4 platforms) ──► build (4 platforms) ─┐
+#         ├─► coverage                                     │
+#         └─► package                                      ├─► ci-ok  (the one required check)
+#   audit ────────────────────────────────────────────────┘
+#
+# Order is fail-fast: cheap checks first (`lint`), so a formatting slip never waits for a
+# four-platform test run. `ci-ok` is the single job to require in branch protection.
+# Releases are a separate pipeline: see release.yml.
 name: CI
+
 on:
   push:
     branches: [master, main]
   pull_request:
+    branches: [master, main]
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC: re-run the dependency audit
+  workflow_dispatch:
+
+# A newer run for the same branch/PR replaces an older one in progress (never on the
+# default branch, where every push should be checked).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Read-only by default; nothing in CI needs to write to the repository.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0" # incremental builds only slow down a fresh CI checkout
+  RUST_BACKTRACE: "1"
+
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  # 1. Static checks: formatting, lints, type-checks for all three operating systems,
+  #    documentation (every item must be documented), spelling, and the workflow files.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+        with:
+          persist-credentials: false
+      # Rust comes from the rustup that every runner ships with. The Windows and macOS
+      # targets are added so their platform-specific code is type-checked on Linux too.
+      - name: Install Rust (stable) with the Windows and macOS targets
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component clippy,rustfmt \
+            --target x86_64-pc-windows-gnu --target aarch64-apple-darwin
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Formatting
+        run: cargo fmt --check
+      # clippy is both the linter and the type-checker: it compiles everything, tests
+      # included. `-D warnings` makes any warning (including a missing doc comment) fail.
+      - name: Clippy (Linux)
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Clippy (Windows)
+        run: cargo clippy --locked --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+      - name: Clippy (macOS)
+        run: cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
+      - name: Documentation builds without warnings (all platforms)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --locked --no-deps --document-private-items
+          cargo doc --locked --no-deps --document-private-items --target x86_64-pc-windows-gnu
+          cargo doc --locked --no-deps --document-private-items --target aarch64-apple-darwin
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: typos
+      - name: Spelling
+        run: typos
+      - name: Workflow files
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
+  # 2. Known vulnerabilities in dependencies (RustSec advisory database). Independent of
+  #    the other jobs, so it runs in parallel.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  # 3. The full test suite on every supported platform. `fail-fast` stops the others as
+  #    soon as one fails; they would only repeat the same news.
+  test:
+    name: Test (${{ matrix.os }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked
+
+  # 4. Test coverage (Linux). Fails below 90% of lines so coverage cannot quietly erode;
+  #    the summary is shown on the run page and the full report is kept as an artifact.
+  coverage:
+    name: Coverage
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable) with the coverage component
+        run: |
+          rustup toolchain install stable --profile minimal --component llvm-tools-preview
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      - name: Run the tests with coverage
+        run: cargo llvm-cov --locked --fail-under-lines 90 --lcov --output-path lcov.info
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '### Test coverage (Linux)'
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          retention-days: 14
+
+  # 5. The crate as it would be published: `cargo package` builds it from only the files
+  #    that would be uploaded, catching a file missing from the package.
+  package:
+    name: Package check
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo package --locked
+
+  # 6. Production build: the optimised release binary on every platform, kept for a week so
+  #    a pull request's binary can be tried by hand. (Published releases are built by
+  #    release.yml, not from these.)
+  build:
+    name: Build (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: ubuntu-latest, artifact: whoisport-linux-x86_64, file: whoisport }
+          - { os: ubuntu-24.04-arm, artifact: whoisport-linux-aarch64, file: whoisport }
+          - { os: macos-latest, artifact: whoisport-macos-aarch64, file: whoisport }
+          - { os: windows-latest, artifact: whoisport-windows-x86_64, file: whoisport.exe }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --release --locked
+      - name: The release binary starts
+        run: target/release/${{ matrix.file }} --version
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release/${{ matrix.file }}
+          retention-days: 7
+
+  # 7. One job that summarises all of the above. Require this single check in branch
+  #    protection instead of listing each job (a skipped or renamed job would otherwise
+  #    silently stop being required).
+  ci-ok:
+    name: CI passed
+    needs: [lint, audit, test, coverage, package, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || { echo "a required job did not succeed"; exit 1; }
+          done
