@@ -88,7 +88,11 @@ whoisport [<PORT>...] --udp        # UDP instead of TCP
 
 Docker: when a port is published by a container, whoisport shows the container
 name and image (`docker  web (nginx:alpine)`), even when the `docker-proxy`
-process itself is owned by root. It asks `docker ps` only in that case.
+process itself is owned by root. Because that owner is unreadable without `sudo`,
+whoisport asks Docker whenever a listener looks like Docker's forwarder or its
+owner can't be read. Only a local daemon is consulted (not an `ssh://` or remote
+`DOCKER_HOST`), and each Docker call is cut off after 2 seconds, so a stuck
+daemon never hangs whoisport; the names are simply left out.
 
 `--kill` always needs explicit ports; it never kills everything. When several
 processes hold one socket, it signals only the innermost ones: service managers
