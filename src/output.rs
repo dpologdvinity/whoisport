@@ -40,7 +40,10 @@ pub fn shown(text: &str) -> String {
         c.is_control()
             || matches!(
                 c,
-                '\u{202a}'..='\u{202e}'
+                '\u{061c}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202a}'..='\u{202e}'
                     | '\u{2066}'..='\u{2069}'
                     | '\u{200b}'..='\u{200f}'
                     | '\u{feff}'
@@ -275,6 +278,9 @@ mod tests {
         assert_eq!(shown("a\u{202e}b"), "a\\u{202e}b");
         assert_eq!(shown("zero\u{200b}width"), "zero\\u{200b}width");
         assert_eq!(shown("\u{feff}bom"), "\\u{feff}bom");
+        assert_eq!(shown("a\u{061c}b"), "a\\u{61c}b");
+        assert_eq!(shown("line\u{2028}sep"), "line\\u{2028}sep");
+        assert_eq!(shown("para\u{2029}sep"), "para\\u{2029}sep");
     }
 
     #[test]

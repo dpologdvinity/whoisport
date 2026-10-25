@@ -99,14 +99,21 @@ fn kill_with(steps: &[(KillStep, &str)], pid: u32, started: u64, force: bool) ->
 /// `svchost.exe` and `services.exe` count too: one `svchost.exe` hosts many Windows
 /// services (RPC on port 135, DNS, ...), so stopping it stops all of them.
 fn is_service_manager(pid: u32, cmd: &str) -> bool {
-    let exe = cmd.split_whitespace().next().unwrap_or("");
+    if pid == 1 {
+        return true;
+    }
+    let trimmed = cmd.trim();
+    let exe = if let Some(inside) = trimmed.strip_prefix('"') {
+        inside.split('"').next().unwrap_or("")
+    } else {
+        trimmed.split_whitespace().next().unwrap_or("")
+    };
     let name = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
-    let name = name.to_ascii_lowercase();
-    pid == 1
-        || matches!(
-            name.as_str(),
-            "systemd" | "launchd" | "svchost.exe" | "services.exe"
-        )
+    let name = name.trim_matches('"').to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "systemd" | "launchd" | "svchost.exe" | "services.exe"
+    )
 }
 
 /// Is `ancestor` somewhere up `pid`'s chain of parents?
@@ -163,6 +170,8 @@ pub fn kill_port(rows: &[&Row], label: &str, force: bool, killed: &mut Vec<u32>)
             eprintln!(
                 "port {label}: published by container {name}; to stop it, run: docker stop {name}"
             );
+            ok = false;
+            continue;
         }
         let Some(info) = &row.info else {
             eprintln!("port {label}: not killed: its owner could not be inspected");
@@ -205,6 +214,10 @@ mod tests {
             1652,
             r"C:\Windows\System32\svchost.exe -k RPCSS"
         ));
+        assert!(is_service_manager(
+            1653,
+            r#""C:\Program Files\Services\svchost.exe" -k RPCSS"#
+        ));
         assert!(!is_service_manager(4242, "python3 -m http.server 3000"));
         assert!(!is_service_manager(
             4243,
@@ -243,6 +256,32 @@ mod tests {
             skip_reason(&manager, &[1]).as_deref(),
             Some("it is a service manager")
         );
+    }
+
+    #[test]
+    fn container_port_is_spared_and_marked_not_ok() {
+        use crate::docker::Container;
+        let row = Row {
+            port: 8080,
+            pid: Some(1234),
+            info: Some(Info {
+                pid: 1234,
+                ppid: 1,
+                user: "root".into(),
+                cmd: "docker-proxy".into(),
+                cwd: "/".into(),
+                uptime_secs: 10,
+                started: 100,
+            }),
+            container: Some(Container {
+                name: "web".into(),
+                image: "nginx".into(),
+            }),
+        };
+        let mut killed = Vec::new();
+        let rows = [&row];
+        assert!(!kill_port(&rows, "8080", false, &mut killed));
+        assert!(killed.is_empty());
     }
 
     #[cfg(unix)]

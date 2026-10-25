@@ -14,7 +14,7 @@
 //! owner and are reported with `pid = None` (shown as `?`).
 
 use crate::Info;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 
@@ -44,13 +44,13 @@ pub fn listen_sockets(table: &str, udp: bool) -> Vec<(u16, u64)> {
         .collect()
 }
 
-/// Map each socket inode to the pids that hold it open, for every process whose
+/// Map each socket inode in `targets` to the pids that hold it open, for every process whose
 /// `/proc/<pid>/fd` we are allowed to read.
 ///
 /// More than one pid can hold a socket (a parent that forked, a supervisor). A process we
 /// cannot read, or one that exits during the scan, is skipped; its sockets then have no
 /// owner in the map.
-fn socket_owners() -> HashMap<u64, Vec<u32>> {
+fn socket_owners(targets: &HashSet<u64>) -> HashMap<u64, Vec<u32>> {
     let mut owners: HashMap<u64, Vec<u32>> = HashMap::new();
     let Ok(dir) = fs::read_dir("/proc") else {
         return owners;
@@ -69,7 +69,8 @@ fn socket_owners() -> HashMap<u64, Vec<u32>> {
             };
             let inode = link
                 .to_str()
-                .and_then(|l| l.strip_prefix("socket:[")?.strip_suffix(']')?.parse().ok());
+                .and_then(|l| l.strip_prefix("socket:[")?.strip_suffix(']')?.parse().ok())
+                .filter(|i| targets.contains(i));
             if let Some(inode) = inode {
                 let pids = owners.entry(inode).or_default();
                 if !pids.contains(&pid) {
@@ -92,7 +93,8 @@ pub fn listeners(udp: bool) -> Vec<(u16, Option<u32>)> {
         .filter_map(|v| fs::read_to_string(format!("/proc/net/{proto}{v}")).ok())
         .flat_map(|t| listen_sockets(&t, udp))
         .collect();
-    let owners = socket_owners();
+    let targets: HashSet<u64> = sockets.iter().map(|(_, inode)| *inode).collect();
+    let owners = socket_owners(&targets);
     let mut out: Vec<(u16, Option<u32>)> = sockets
         .iter()
         .flat_map(|(port, inode)| match owners.get(inode) {
@@ -213,7 +215,8 @@ pub fn info(pid: u32) -> Option<Info> {
         .parse()
         .ok()?;
     // SAFETY: sysconf only reads a system constant; _SC_CLK_TCK is always valid.
-    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    let sc = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let hz = if sc > 0 { sc as f64 } else { 100.0 };
     Some(Info {
         pid,
         ppid,
