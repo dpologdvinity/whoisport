@@ -37,16 +37,18 @@ fn run_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Option<S
     // Drain stdout on its own thread so a large output cannot fill the pipe and stall
     // the child while we poll for its exit.
     let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stdout.read_to_end(&mut bytes);
-        String::from_utf8_lossy(&bytes).into_owned()
+        let _ = tx.send(String::from_utf8_lossy(&bytes).into_owned());
     });
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let out = reader.join().ok()?;
+                let time_left = deadline.saturating_duration_since(Instant::now());
+                let out = rx.recv_timeout(time_left).ok()?;
                 return status.success().then_some(out);
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
