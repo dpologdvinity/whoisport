@@ -283,8 +283,10 @@ repository only.
 3. waits until Pages serves the new version and installs it, as the README says, in a clean
    `debian:stable-slim` container.
 
-It does nothing when the secret is missing or the tag is not the latest release, so re-running
-an old tag cannot replace a newer repository. It can also be run by hand for an existing tag.
+It does nothing when the secret is missing, the tag is not the latest release, or the
+repository already serves a newer version (compared with `dpkg --compare-versions`), so
+re-running an old tag or publishing a backport cannot replace a newer repository. The signing
+key is given only to the build step, and the gpg agent is stopped before the step ends. It can also be run by hand for an existing tag.
 `tests/apt_test.sh` (in CI) builds a repository from two fake packages with a throwaway key
 and checks, with `apt-get` in a private state directory, that apt accepts it, lists both
 architectures and downloads the package intact, and refuses a tampered `.deb` or a repository

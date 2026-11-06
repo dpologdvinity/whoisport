@@ -6,7 +6,8 @@
 # then the real apt-get reads it through a file: URI, in a private state directory so the
 # system's apt configuration is never touched.
 # Covers: apt accepts the signature, every architecture lists the package, a download is
-# checksum-verified, and a tampered .deb or a repository signed by another key is refused.
+# checksum-verified, and a tampered .deb or a repository signed by another key is refused
+# (each for the right reason: the error apt prints is checked, not just the failure).
 
 set -euo pipefail
 
@@ -46,7 +47,7 @@ apt_sandboxed() {
     local tool=$1 state=$2
     shift 2
     "$tool" -q -o Dir::Etc::SourceList="$state/sources.list" -o Dir::Etc::SourceParts=/nonexistent \
-        -o Dir::Etc::Preferences=/dev/null -o Dir::Etc::PreferencesParts=/nonexistent \
+        -o Dir::Etc::Preferences=/dev/null -o Dir::Etc::PreferencesParts=/nonexistent -o Dir::Etc::Parts=/nonexistent \
         -o Dir::State="$state" -o Dir::State::status="$state/status" -o Dir::Cache="$state/cache" \
         -o Debug::NoLocking=1 -o APT::Sandbox::User="$(id -un)" \
         -o APT::Architecture=amd64 -o APT::Architectures::=amd64 -o APT::Architectures::=arm64 "$@"
@@ -103,20 +104,24 @@ fi
 # --- apt refuses tampering ------------------------------------------------------------------
 printf 'x' >>"$work/repo/pool/main/whoisport_9.9.9-1_amd64.deb"
 rm -rf "$work/dl"/*
-if (cd "$work/dl" && apt_sandboxed apt-get "$state" download whoisport:amd64 >/dev/null 2>&1); then
+if out=$(cd "$work/dl" && apt_sandboxed apt-get "$state" download whoisport:amd64 2>&1); then
     check "refuses a tampered .deb" "download succeeded"
-else
+elif grep -qiE 'mismatch|unexpected size' <<<"$out"; then
     check "refuses a tampered .deb" ok
+else
+    check "refuses a tampered .deb" "failed for another reason: $out"
 fi
 other=$(new_key "$work/other-gpg" "someone else")
 GNUPGHOME="$work/other-gpg" gpg --batch --armor --export "$other" >"$work/other.asc"
 state=$(new_state wrong-key "$work/repo" "$work/other.asc")
-apt_sandboxed apt-get "$state" update >/dev/null 2>&1 || true
+out=$(apt_sandboxed apt-get "$state" update 2>&1) && status=0 || status=$?
 v=$(apt_sandboxed apt-cache "$state" policy whoisport:amd64 2>&1 | awk '/Candidate:/ {print $2}')
 if [ -n "$v" ] && [ "$v" != "(none)" ]; then
-    check "refuses a repository signed by another key" "apt update trusted it"
-else
+    check "refuses a repository signed by another key" "apt trusted it (candidate $v)"
+elif [ "$status" -ne 0 ] && grep -qE 'NO_PUBKEY|Missing key|not signed|could(n.t| not) be verified' <<<"$out"; then
     check "refuses a repository signed by another key" ok
+else
+    check "refuses a repository signed by another key" "no signature error (exit $status): $out"
 fi
 
 if [ "$failures" -eq 0 ]; then
