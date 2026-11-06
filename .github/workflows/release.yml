@@ -4,7 +4,9 @@
 #          ├─► macos (Apple silicon, Intel)    ├─► publish ──► pypi-publish
 #          ├─► windows                         │   (release      (PyPI, trusted
 #          └─► pypi-wheels / pypi-sdist ───────┘    goes public)   publishing)
-#                                                                └─► npm (if enabled)
+#                                                                ├─► npm (if enabled)
+#                                                                └─► apt (signed apt repo
+#                                                                    on GitHub Pages, apt.yml)
 #
 # Nothing is public until every build succeeded: `create` makes a DRAFT release, the build
 # jobs upload to it, and only `publish` makes it public. Homebrew (homebrew-tap) and Scoop
@@ -211,6 +213,16 @@ jobs:
             fi
             (cd "$dir" && npm publish --provenance --access public)
           done
+  # Signed apt repository on GitHub Pages, rebuilt from this release's .deb files.
+  apt:
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/apt.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
   # After the release is public: run the PUBLISHED installers, from the URLs users will use,
   # on each platform. This cannot undo a bad release, but it fails loudly so it is fixed at
   # once. It checks both an explicit version and the default ("latest") path.

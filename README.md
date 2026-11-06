@@ -69,8 +69,22 @@ ports marked ? are owned by another user; run with sudo to see it
 | Any, with Python | `pipx install whoisport` or `uvx whoisport` |
 | macOS, Linux | `brew install dpologdvinity/tap/whoisport` |
 | Windows | `scoop bucket add whoisport https://github.com/dpologdvinity/scoop-whoisport` then `scoop install whoisport` |
-| Debian, Ubuntu | download the `.deb` from [Releases](https://github.com/dpologdvinity/whoisport/releases), then `sudo apt install ./whoisport_*.deb` |
+| Debian, Ubuntu | add the signed apt repository (below), then `sudo apt install whoisport`; updates come with `apt upgrade` |
 | Fedora, RHEL | download the `.rpm` from [Releases](https://github.com/dpologdvinity/whoisport/releases), then `sudo dnf install ./whoisport-*.rpm` |
+
+### Debian and Ubuntu (apt repository)
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://dpologdvinity.github.io/whoisport/key.asc | sudo tee /etc/apt/keyrings/whoisport.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/whoisport.asc] https://dpologdvinity.github.io/whoisport stable main" | sudo tee /etc/apt/sources.list.d/whoisport.list
+sudo apt update && sudo apt install whoisport
+```
+
+The repository is signed, and `signed-by` limits that key to this one repository. It serves
+the latest release for amd64 and arm64. Without the repository, the `.deb` from
+[Releases](https://github.com/dpologdvinity/whoisport/releases) installs with
+`sudo apt install ./whoisport_*.deb` (no automatic updates).
 
 ### The one-line installers
 
