@@ -9,7 +9,7 @@
     irm https://github.com/dpologdvinity/whoisport/releases/latest/download/install.ps1 | iex
 
     Settings are environment variables, set before running the line above:
-      WHOISPORT_VERSION         release to install, e.g. v0.5.7 (default: the latest)
+      WHOISPORT_VERSION         release to install, e.g. v0.5.8 (default: the latest)
       WHOISPORT_INSTALL_DIR     where to put whoisport.exe
                                 (default: %LOCALAPPDATA%\Programs\whoisport)
       WHOISPORT_NO_MODIFY_PATH  set to 1 to leave your PATH alone

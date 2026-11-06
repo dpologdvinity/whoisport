@@ -82,16 +82,16 @@ binary goes to `~/.local/bin` (Linux, macOS) or `%LOCALAPPDATA%\Programs\whoispo
 
 ```sh
 # a specific version, or a different directory
-curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh | sh -s -- --version v0.5.7 --dir /usr/local/bin
+curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh | sh -s -- --version v0.5.8 --dir /usr/local/bin
 ```
 
 ```powershell
-$env:WHOISPORT_VERSION = 'v0.5.7'; irm https://github.com/dpologdvinity/whoisport/releases/latest/download/install.ps1 | iex
+$env:WHOISPORT_VERSION = 'v0.5.8'; irm https://github.com/dpologdvinity/whoisport/releases/latest/download/install.ps1 | iex
 ```
 
 Piping a download into a shell means trusting it, so read the script first if you like
 ([`install.sh`](install.sh), [`install.ps1`](install.ps1)); to pin it, use the URL of a
-specific release, `…/releases/download/v0.5.7/install.sh`. To uninstall, delete the
+specific release, `…/releases/download/v0.5.8/install.sh`. To uninstall, delete the
 `whoisport` binary from that directory.
 
 Or download a binary from the [Releases page](https://github.com/dpologdvinity/whoisport/releases):
