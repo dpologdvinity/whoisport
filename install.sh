@@ -109,7 +109,7 @@ usage() {
 whoisport installer for Linux and macOS
 
   curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh | sh
-  curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh | sh -s -- --version v0.5.7
+  curl -fsSL https://github.com/dpologdvinity/whoisport/releases/latest/download/install.sh | sh -s -- --version v0.5.8
 
 Options (or the environment variables beside them):
   --version <tag>   WHOISPORT_VERSION      release to install (default: the latest)
