@@ -1,0 +1,37 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64 arm64
+Codename: stable
+Components: main
+Date: Fri, 06 Nov 2026 10:11:16 +0000
+Label: whoisport
+Origin: whoisport
+Suite: stable
+MD5Sum:
+ 40fdc055f5eed24acae87ebdce3a2411              842 main/binary-amd64/Packages
+ 1f8b794c87413e8cfa082074818184ae              592 main/binary-amd64/Packages.gz
+ eef58dab94b0c21c3d75b870bbe27908              842 main/binary-arm64/Packages
+ 0a2f8e6c36610feada6fdcd93c57dc05              586 main/binary-arm64/Packages.gz
+SHA1:
+ dfa60bc4d21354da2e4f1f81ce8b51ac0dfe1c8e              842 main/binary-amd64/Packages
+ 694549065fb2b5e6e309c9169f6661130182e9e6              592 main/binary-amd64/Packages.gz
+ be9aef16bc791f62d4ade05cd3cc136b2fad95b0              842 main/binary-arm64/Packages
+ 98f858ba265a3f21687ed560c51a1f818fe0c12d              586 main/binary-arm64/Packages.gz
+SHA256:
+ ee070ba5a779ced8b9e8393fbffa7500979980bf443d1356ee5b9a842b547df5              842 main/binary-amd64/Packages
+ fde20d700b23fe1321d6715eee93ef31294c1d46ad2a783fe0eba802c387bc2a              592 main/binary-amd64/Packages.gz
+ 17ca0edd972d479cdfde2a2f33be0fd1c20e6a205fb27aed5fec8212a2110a42              842 main/binary-arm64/Packages
+ 883fd9687519419569a92430eb705cb77f9272b7d72f67ac8dc91aee875c190e              586 main/binary-arm64/Packages.gz
+SHA512:
+ 061b4a2d486dfbe45f1f4ca911ea70bbfa735b0e006d15bce0e5787b50ed05b59fd9843ab147858e56186606915b522d6a997bc8d16fd8e54932baeda0bee86c              842 main/binary-amd64/Packages
+ 3562b338cfec171db164fdd69fd87a01f7ff441ff3943a60bb0d6bc8a696ce40058a2b17ebcdb0a83ed03f75cf1e2968c7084e257063342d281756cf5172df1d              592 main/binary-amd64/Packages.gz
+ 4ef8cb3938143d3a8bb72ffbc1b499ed72f18a8278c739824d6bd479cce646f1919aee84b503f6b9da7bd99b4b7bb57f0cd17ab71bf66489e05dfcb5a256de48              842 main/binary-arm64/Packages
+ 63c3103401fe734d0d4a1fe69e4b1cfb48b7c3f28edc91b3910cd91c331b2ddb49e2a8a258d061d2185ad8fccb63ad3a9355b90fdfc268df91fa1a142eeab06c              586 main/binary-arm64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQSmLv74wudU1ja4uhFyP9H1NEivUAUCau2nxAAKCRByP9H1NEiv
+UJ7TAQDD9P7y/q/mbkoNr+BuIBBtuZ3VkMrVr9y/oJC8eKtptwD/b8gxlyvs81gp
+rVqOVcLR8Gq2QtVc8aD0LFNYq2zxQAE=
+=a2wO
+-----END PGP SIGNATURE-----

@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>whoisport apt repository</title>
+<h1>whoisport apt repository</h1>
+<pre>
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://dpologdvinity.github.io/whoisport/key.asc | sudo tee /etc/apt/keyrings/whoisport.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/whoisport.asc] https://dpologdvinity.github.io/whoisport stable main" | sudo tee /etc/apt/sources.list.d/whoisport.list
+sudo apt update &amp;&amp; sudo apt install whoisport
+</pre>
+<p>Key fingerprint: <code>A62EFEF8C2E754D636B8BA11723FD1F53448AF50</code></p>
+<p><a href="https://github.com/dpologdvinity/whoisport">github.com/dpologdvinity/whoisport</a></p>

@@ -1,0 +1,20 @@
+Package: whoisport
+Architecture: arm64
+Version: 0.5.8-1
+Priority: optional
+Section: utils
+Maintainer: Kaitlyn Bassford
+Installed-Size: 812
+Depends:
+Filename: pool/main/whoisport_0.5.8-1_arm64.deb
+Size: 334804
+MD5sum: 4ca56c196f604426026f58b7f1ff1c9b
+SHA1: dee29686a8303902e3689ef2762f49747410180b
+SHA256: 1d0cd850669eebd1295f694e16d0a7637ced12de0dfae970fb0eb8932bae9479
+SHA512: fd6fc043fb83076ded6a5209f9c97e482d945c11234f49c90848c584c43ee91911a66d0b2babcb44461d111bae75acb19035c0a580c03debb8b997d9c98833e5
+Homepage: https://github.com/dpologdvinity/whoisport
+Description: Show what is listening on a TCP or UDP port, and optionally kill it
+ Lists every listening TCP or UDP port with the process behind it (command line,
+ working directory, user, uptime), shows details for specific ports, and can ask
+ the process to exit or terminate it.
+
