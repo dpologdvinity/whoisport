@@ -244,7 +244,8 @@ create (check tag == Cargo.toml version, run tests, make a DRAFT release)
   └─► pypi-wheels / pypi-sdist
         └─► publish  (release becomes public)
               ├─► pypi-publish  (trusted publishing, no token)
-              └─► npm           (off unless the NPM_PUBLISH variable is "true")
+              ├─► npm           (off unless the NPM_PUBLISH variable is "true")
+              └─► apt           (apt.yml: signed apt repository on GitHub Pages)
 ```
 
 Nothing is public until every build has succeeded. Just before the release is made public, the
@@ -261,8 +262,33 @@ macOS and Windows, from the URLs users will use. Channels:
 | Scoop (separate `scoop-whoisport` repository) | its own workflow polls for new releases every 6 hours and updates the manifest from the release's published SHA-256 |
 | Homebrew (separate `homebrew-tap` repository) | its own workflow polls for new releases every 6 hours |
 | `cargo binstall` | reads `[package.metadata.binstall]` in `Cargo.toml`; uses the release assets |
+| apt repository (`https://dpologdvinity.github.io/whoisport`) | `apt.yml`, called by `release.yml` (see below) |
 | winget | manual pull request to `microsoft/winget-pkgs` |
-| npm | the packaging is in `npm/`; the publish job is switched off until npm trusted publishing is configured for each package |
+| npm | the packaging is in `npm/`; `release.yml` publishes with trusted publishing (OIDC, no token) when the `NPM_PUBLISH` variable is `true` |
+
+### The apt repository
+
+`apt/build.sh` turns a release's `.deb` files (amd64 and arm64) into a static apt repository:
+`pool/main/*.deb`, one `Packages` list per architecture, and a `Release` index that lists the
+checksum of every `Packages` file. The index is signed twice: `InRelease` (clear-signed, what
+modern apt reads) and `Release.gpg` (detached, for old clients). apt checks that signature,
+then each checksum down to the `.deb`, so changing any file is detected. The public key is
+published as `key.asc`, and users add it with `signed-by` so it is trusted for this
+repository only.
+
+`apt.yml` runs it with the `APT_GPG_PRIVATE_KEY` secret, then:
+1. installs `whoisport` with the real apt from the built files on the runner, before anything is public;
+2. force-pushes the result as the only commit on `gh-pages` (the repository always holds just
+   the latest release; GitHub Pages serves it);
+3. waits until Pages serves the new version and installs it, as the README says, in a clean
+   `debian:stable-slim` container.
+
+It does nothing when the secret is missing or the tag is not the latest release, so re-running
+an old tag cannot replace a newer repository. It can also be run by hand for an existing tag.
+`tests/apt_test.sh` (in CI) builds a repository from two fake packages with a throwaway key
+and checks, with `apt-get` in a private state directory, that apt accepts it, lists both
+architectures and downloads the package intact, and refuses a tampered `.deb` or a repository
+signed by another key.
 
 ### The installers
 

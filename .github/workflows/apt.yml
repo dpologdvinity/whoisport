@@ -1,0 +1,112 @@
+# Signed apt repository on GitHub Pages (https://dpologdvinity.github.io/whoisport).
+#
+# Called by release.yml after a release goes public, and runnable by hand (Actions -> apt
+# repository -> Run workflow) to rebuild it for an existing tag. It serves one version, the
+# latest release: the `gh-pages` branch is regenerated from that release's .deb files.
+#
+#   build (apt/build.sh, signed with APT_GPG_PRIVATE_KEY) -> install it on the runner
+#     -> force-push gh-pages -> wait for Pages -> install from the live URL in clean Debian
+#
+# Skips (with a notice) when the secret is not set or the tag is not the latest release, so an
+# old tag can never replace a newer repository.
+name: apt repository
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to publish, e.g. v0.5.8
+        required: true
+        type: string
+    secrets:
+      APT_GPG_PRIVATE_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, e.g. v0.5.8
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  apt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # push the gh-pages branch
+    # two runs must not interleave their force-pushes
+    concurrency:
+      group: apt-repo
+      cancel-in-progress: false
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      APT_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+      URL: https://dpologdvinity.github.io/whoisport
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide whether to publish
+        id: gate
+        run: |
+          if [ -z "$APT_KEY" ]; then echo "::notice::APT_GPG_PRIVATE_KEY is not set; skipping the apt repository"; exit 0; fi
+          latest=$(gh api "repos/$GH_REPO/releases/latest" -q .tag_name)
+          if [ "$TAG" != "$latest" ]; then
+            echo "::notice::$TAG is not the latest release ($latest); leaving the apt repository alone"
+            exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+      - name: Build the signed repository
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          gpg --batch --import <<<"$APT_KEY"
+          fp=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+          mkdir debs
+          gh release download "$TAG" -p '*.deb' -D debs
+          apt/build.sh "$PWD/debs" "$RUNNER_TEMP/site" "$fp"
+          rm -rf "$GNUPGHOME"
+      # Before anything is public: the real apt, as root, installs from the built files.
+      - name: Install from the built repository
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          sudo install -d -m 0755 /etc/apt/keyrings
+          sudo install -m 0644 "$RUNNER_TEMP/site/key.asc" /etc/apt/keyrings/whoisport-test.asc
+          echo "deb [signed-by=/etc/apt/keyrings/whoisport-test.asc] file:$RUNNER_TEMP/site stable main" |
+            sudo tee /etc/apt/sources.list.d/whoisport-test.list
+          # read only the test source (faster, and proves the package comes from it)
+          sudo apt-get update -o Dir::Etc::SourceList=sources.list.d/whoisport-test.list -o Dir::Etc::SourceParts=- -o APT::Get::List-Cleanup=0
+          sudo apt-get install -y whoisport
+          whoisport --version | grep -F "${TAG#v}"
+          sudo apt-get remove -y whoisport
+          sudo rm /etc/apt/sources.list.d/whoisport-test.list /etc/apt/keyrings/whoisport-test.asc
+      - name: Publish to gh-pages
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          cd "$RUNNER_TEMP/site"
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -q -m "apt repository for $TAG"
+          # generated content: the branch always holds just the latest release
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" gh-pages
+      # After it is public: wait for Pages to serve this version, then install it the way the
+      # README says, in a clean Debian container.
+      - name: Install from the live repository
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          version=${TAG#v}
+          for _ in $(seq 60); do
+            if curl -fsS "$URL/dists/stable/main/binary-amd64/Packages" 2>/dev/null | grep -qx "Version: $version-1"; then break; fi
+            sleep 10
+          done
+          docker run --rm -e URL -e VERSION="$version" debian:stable-slim sh -euc '
+            apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$URL/key.asc" > /etc/apt/keyrings/whoisport.asc
+            echo "deb [signed-by=/etc/apt/keyrings/whoisport.asc] $URL stable main" > /etc/apt/sources.list.d/whoisport.list
+            apt-get update -qq && apt-get install -y -qq whoisport >/dev/null
+            whoisport --version | grep -F "$VERSION"'

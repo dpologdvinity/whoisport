@@ -34,6 +34,7 @@ CI runs all of these on every pull request; run them yourself before pushing.
 | Dependency audit | `cargo audit` |
 | npm packaging | `node npm/check.mjs` |
 | Installers (shell) | `shellcheck install.sh tests/install_test.sh && sh tests/install_test.sh` |
+| apt repository | `shellcheck apt/build.sh tests/apt_test.sh && bash tests/apt_test.sh` (needs `dpkg-deb`, `apt-utils`, `gpg`; no root) |
 | Installer (Windows) | `cargo build --release`, then `pwsh tests/install_test.ps1 -Exe target/release/whoisport.exe` (also `powershell` 5.1) |
 | Coverage (must stay at or above 90 % of lines) | `cargo llvm-cov --fail-under-lines 90` (needs `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`) |
 
@@ -116,8 +117,9 @@ Please do not commit editor, agent or local-tool files (`.claude/`, `.codex/`,
    Merge it once CI is green.
 2. Tag the merge commit and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin
    vX.Y.Z`. `release.yml` checks the tag matches `Cargo.toml`, runs the tests, builds
-   every platform into a *draft* release, and only when all builds succeeded publishes it
-   and PyPI.
+   every platform into a *draft* release, and only when all builds succeeded publishes it,
+   then PyPI, npm and the apt repository (`apt.yml`; rerun it by hand from the Actions tab
+   with the tag if it ever needs rebuilding).
 3. Publish the crate: `cargo publish` (then `cargo clean -p whoisport`, so a later build
    does not reuse the packaged copy).
 4. Homebrew (`homebrew-tap`) and Scoop (`scoop-whoisport`) update themselves within six
