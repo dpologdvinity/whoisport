@@ -85,6 +85,7 @@ jobs:
       # shellcheck and pwsh come with the runner image.
       - name: Installers and apt repository (shell lint, PowerShell syntax, tests)
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils >/dev/null # apt-ftparchive, for tests/apt_test.sh
           shellcheck install.sh tests/install_test.sh apt/build.sh tests/apt_test.sh
           pwsh -NoProfile -File tests/check_powershell_syntax.ps1 install.ps1 tests/install_test.ps1 tests/check_powershell_syntax.ps1
           sh tests/install_test.sh
