@@ -62,7 +62,7 @@ libc = "0.2.191"
 
 # Windows and macOS have no /proc: `sysinfo` reads process details (see src/sysinfo_info.rs).
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-sysinfo = { version = "0.39.6", default-features = false, features = ["system", "user"] }
+sysinfo = { version = "0.40.1", default-features = false, features = ["system", "user"] }
 
 # Windows only: the IP Helper, console and window APIs (see src/proc_windows.rs).
 [target."cfg(windows)".dependencies]
