@@ -247,7 +247,10 @@ fn is_shell_name(name: &str) -> bool {
 /// server, a parent like `concurrently`, or the user's own whoisport) would be interrupted
 /// too. Shells (`cmd`, PowerShell) are tolerated because they only host the target.
 fn console_shared(target: u32, on_console: &[u32]) -> bool {
-    let mut sys = System::new();
+    // Without a process table nothing can be checked: assume shared, so Ctrl+C is not sent.
+    let Ok(mut sys) = System::new() else {
+        return true;
+    };
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let descends_from_target = |mut pid: u32| {
         for _ in 0..64 {

@@ -10,10 +10,13 @@ use std::sync::OnceLock;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Users};
 
 /// The system's user list, loaded once: it is needed to turn a user id into a name, and
-/// loading it is slower than looking a name up.
-fn users() -> &'static Users {
-    static USERS: OnceLock<Users> = OnceLock::new();
-    USERS.get_or_init(Users::new_with_refreshed_list)
+/// loading it is slower than looking a name up. `None` if it cannot be loaded; owners then
+/// show as `?`.
+fn users() -> Option<&'static Users> {
+    static USERS: OnceLock<Option<Users>> = OnceLock::new();
+    USERS
+        .get_or_init(|| Users::new_with_refreshed_list().ok())
+        .as_ref()
 }
 
 /// Details of one process, or `None` if it does not exist or cannot be read.
@@ -24,7 +27,7 @@ fn users() -> &'static Users {
 /// seconds since the epoch.
 pub fn info(pid: u32) -> Option<Info> {
     let p = Pid::from_u32(pid);
-    let mut sys = System::new();
+    let mut sys = System::new().ok()?;
     let kind = ProcessRefreshKind::nothing()
         .with_cmd(UpdateKind::Always)
         .with_cwd(UpdateKind::Always)
@@ -47,7 +50,7 @@ pub fn info(pid: u32) -> Option<Info> {
     };
     let user = proc
         .user_id()
-        .and_then(|u| users().get_user_by_id(u))
+        .and_then(|u| users()?.get_user_by_id(u))
         .map_or("?".into(), |u| u.name().to_string());
     Some(Info {
         pid,
