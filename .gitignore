@@ -1,2 +1,9 @@
 /target
+
+# Secrets and personal overrides (agent config such as .claude/settings.local.json and
+# CLAUDE.local.md included). Copy .env.example if one is ever added.
 .env
+.env.*
+!.env.example
+*.local.*
+lefthook-local.yml
