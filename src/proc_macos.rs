@@ -78,7 +78,11 @@ pub fn alive(pid: u32) -> bool {
     }
     // A zombie has already exited; it only lingers until its parent reaps it.
     let p = Pid::from_u32(pid);
-    let mut sys = System::new();
+    // kill(0) succeeded, so the process exists; if sysinfo cannot start, say so rather
+    // than report it gone.
+    let Ok(mut sys) = System::new() else {
+        return true;
+    };
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[p]),
         true,
