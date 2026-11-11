@@ -14,7 +14,10 @@ Set Framerate 15
 Hide
 Type "export PATH=$PWD/target/release:$PATH PS1='$ '" Enter
 Type "docker run -d --rm --name web -p 8080:80 busybox httpd -f -p 80 >/dev/null" Enter
-Type "unshare -rn sh -c 'ip link set lo up && exec unshare -U --map-user=1000 --map-group=1000 bash --norc'" Enter
+# uid 1000 shows as "dev": a copy of /etc/passwd is bind-mounted in a private mount
+# namespace, so the recording never shows the real user name.
+Type "{ grep -v '^[^:]*:[^:]*:1000:' /etc/passwd; echo 'dev:x:1000:1000::/tmp:/bin/sh'; } >/tmp/demo-passwd" Enter
+Type "unshare -rnm sh -c 'mount --bind /tmp/demo-passwd /etc/passwd && ip link set lo up && exec unshare -U --map-user=1000 --map-group=1000 bash --norc'" Enter
 Type "export PS1='$ '; mkdir -p /tmp/demo-site /tmp/demo-api" Enter
 # setsid -f: no parent shell, so nothing prints "Terminated" when they are killed.
 Type "cd /tmp/demo-site && setsid -f python3 -m http.server 3000 >/dev/null 2>&1" Enter
