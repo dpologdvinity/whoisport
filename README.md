@@ -42,9 +42,9 @@ $ whoisport 3000
 port    3000
 pid     373232
 parent  373230
-user    kaitlyn
+user    dev
 cmd     node node_modules/.bin/vite --port 3000
-cwd     /home/kaitlyn/site
+cwd     ~/site
 uptime  4m 12s
 
 $ whoisport 3000 --kill
@@ -53,9 +53,9 @@ pid 373232: exited after SIGTERM
 
 $ whoisport
 PORT   PID      USER       CMD
-3000   373232   kaitlyn    node node_modules/.bin/vite --port 3000
+3000   373232   dev        node node_modules/.bin/vite --port 3000
 5432   ?        ?          ?
-8080   41120    kaitlyn    python3 -m http.server 8080
+8080   41120    dev        python3 -m http.server 8080
 ports marked ? are owned by another user; run with sudo to see it
 ```
 
@@ -140,8 +140,8 @@ what is unknown (for example the owner of a process you may not inspect) is `nul
 ```json
 [
   {
-    "port": 3000, "proto": "tcp", "pid": 373232, "ppid": 373230, "user": "kaitlyn",
-    "cmd": "node node_modules/.bin/vite --port 3000", "cwd": "/home/kaitlyn/site",
+    "port": 3000, "proto": "tcp", "pid": 373232, "ppid": 373230, "user": "dev",
+    "cmd": "node node_modules/.bin/vite --port 3000", "cwd": "~/site",
     "uptime_secs": 252, "container": null, "image": null
   }
 ]
