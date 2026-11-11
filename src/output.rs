@@ -196,7 +196,7 @@ mod tests {
             info: Some(Info {
                 pid: 42,
                 ppid: 1,
-                user: "kaitlyn".into(),
+                user: "dev".into(),
                 cmd: "python3 -m http.server 3000".into(),
                 cwd: "/srv".into(),
                 uptime_secs: 125,
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(lines[0], "PORT   PID      USER       CMD");
         assert_eq!(
             lines[1],
-            "3000   42       kaitlyn    python3 -m http.server 3000"
+            "3000   42       dev        python3 -m http.server 3000"
         );
         assert_eq!(lines[2], "22     ?        ?          ?");
     }
@@ -310,7 +310,7 @@ mod tests {
             image: "nginx".into(),
         });
         let text = format_details(&row, false);
-        assert!(text.starts_with("port    3000\npid     42\nparent  1\nuser    kaitlyn\n"));
+        assert!(text.starts_with("port    3000\npid     42\nparent  1\nuser    dev\n"));
         assert!(text.contains("docker  web (nginx)\ncwd     /srv\nuptime  2m 5s\n"));
     }
 
@@ -335,7 +335,7 @@ mod tests {
         let value = json_rows(&[known(), hidden(22, None)], "tcp");
         let (full, bare) = (&value[0], &value[1]);
         assert_eq!(full["pid"], 42);
-        assert_eq!(full["user"], "kaitlyn");
+        assert_eq!(full["user"], "dev");
         assert_eq!(full["proto"], "tcp");
         assert!(full["container"].is_null());
         // The unreadable row has the same keys, with null for what is unknown.
