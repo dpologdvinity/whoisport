@@ -1,7 +1,8 @@
 # AGENTS.md
 
 Instructions for coding agents (Claude Code, Codex and others) working in this repository.
-`CLAUDE.md` only imports this file, so this is the single source of truth.
+Claude Code loads it through the built-in `cc-plugin-agents-md` plugin (enabled in
+`.claude/settings.json`), so there is no `CLAUDE.md`: this is the single source of truth.
 
 ## What this is
 
