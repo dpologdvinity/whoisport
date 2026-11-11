@@ -108,9 +108,10 @@ Pull requests are squash-merged, so **the PR title becomes the commit message on
 tested it. A PR should pass every CI job (`CI passed` is the single aggregate check).
 
 Shared agent configuration is committed: [AGENTS.md](AGENTS.md) (instructions for coding
-agents; `CLAUDE.md` imports it), `.claude/settings.json` and `.codex/config.toml`. Keep
-personal overrides in `.claude/settings.local.json` or `CLAUDE.local.md`, which are
-gitignored, and other editor or local-tool files in `.git/info/exclude`.
+agents; Claude Code loads it through the built-in `cc-plugin-agents-md` plugin),
+`.claude/settings.json` and `.codex/config.toml`. Keep personal overrides in
+`.claude/settings.local.json` or `CLAUDE.local.md`, which are gitignored, and other editor
+or local-tool files in `.git/info/exclude`.
 
 ## Releases (maintainers)
 
